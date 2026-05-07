@@ -235,10 +235,12 @@ Safari 수집은 `FETCH_MIN_WAIT_SECONDS`, `FETCH_STABLE_POLLS`를 써서 DOM이
 - 파일명은 가능하면 KLMS가 실제로 내려준 다운로드 파일명을 그대로 유지하고, 이후 manifest/state도 그 이름으로 맞춘다.
 - `sync_klms_core.sh`와 `sync_klms_notice.sh`는 첨부파일 다운로드를 호출하지 않는다. 파일 다운로드는 `refresh_course_files.sh` 같은 파일 정리 단계에서만 일어난다.
 - 기본 정리 위치 예시는 `./course_files`다.
-- 정리 구조는 `<과목>/<bucket>/<source title>/<filename>` 형태다.
+- 기본 정리 구조는 `<과목>/<bucket>/<source title>/<filename>` 형태다. 예: `Example Course/resources/1주차/Week 1 Notes.pdf`
+- `FILE_WEEKLY_FOLDERS_ENABLED=0`으로 두면 주차/source title 폴더를 생략해서 `<과목>/<bucket>/<filename>` 형태로 정리한다. 예: `Example Course/resources/Week 1 Notes.pdf`
+- 같은 bucket 안에서 파일명이 겹치면 `filename (2).pdf`처럼 suffix를 붙여 충돌을 피한다.
 - `<filename>`은 실제 다운로드된 원본 파일명을 그대로 사용한다(임의 리네임 없음).
 - 게시판 글의 본문에 인라인으로 삽입된 이미지/미디어는 수집 대상에서 제외하고, 실제 첨부파일 목록에 올라온 문서/압축파일/스프레드시트 같은 파일만 manifest에 넣는다.
-- 이번 실행에서 새로 받은 파일은 먼저 `~/Downloads/KLMS Files/<과목>/<bucket>/<source title>/<filename>` 구조로 내려받고, 과목별 폴더에는 별도 복사본을 만든다.
+- 이번 실행에서 새로 받은 파일은 먼저 `~/Downloads/KLMS Files` 아래의 같은 정리 구조로 내려받고, 과목별 폴더에는 별도 복사본을 만든다.
 - 파일 정리 스크립트는 먼저 현재 정리본, `~/Downloads/KLMS Files`, 이전 다운로드 로그가 가리키는 예전 경로를 재사용한다. 이 셋에 파일이 없을 때만 Safari를 열어 실제 다운로드를 시도한다.
 - 기본 파일 정리 실행이 끝나면 이번에 새로 받은 파일만 `~/Downloads/KLMS Files`에 남긴다.
 - `~/Downloads/KLMS Files`의 추적 파일을 전부 정리하고 `course_files` 정리본만 남기고 싶으면 `FILE_KEEP_FRESH_DOWNLOADS=0`을 설정한다.

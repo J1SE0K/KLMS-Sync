@@ -85,7 +85,20 @@ def main_with_args(argv: list[str] | None = None) -> int:
         if effective_relative_path:
             output_path_for_entry = output_root / Path(effective_relative_path)
             archive_path_for_entry = archive_root / Path(effective_relative_path)
-            if not output_path_for_entry.is_file() and not archive_path_for_entry.is_file():
+            reusable_relative_paths = reusable_entry_relative_paths(
+                effective_relative_path,
+                previous,
+            )
+            reusable_paths = [
+                root / Path(relative_path)
+                for relative_path in reusable_relative_paths
+                for root in (output_root, archive_root)
+            ]
+            if (
+                not output_path_for_entry.is_file()
+                and not archive_path_for_entry.is_file()
+                and not any(path.is_file() for path in reusable_paths)
+            ):
                 fresh_download_candidates.append(compact_entry(item, effective_relative_path))
 
     prune_candidates = sorted(
@@ -190,6 +203,29 @@ def effective_entry_relative_path(item: dict[str, Any], previous: dict[str, Any]
     if not active_filename:
         return manifest_relative_path
     return str(Path(relative_dir) / active_filename) if relative_dir else active_filename
+
+
+def reusable_entry_relative_paths(
+    effective_relative_path: str,
+    previous: dict[str, Any] | None,
+) -> list[str]:
+    paths: list[str] = []
+    if previous is not None:
+        for field in ("relative_path", "downloads_relative_path", "manifest_relative_path"):
+            value = str(previous.get(field) or "").strip()
+            if value:
+                paths.append(value)
+
+    seen: set[str] = set()
+    unique_paths: list[str] = []
+    effective_canonical = canonical_relative_path(effective_relative_path)
+    for path in paths:
+        canonical = canonical_relative_path(path)
+        if not canonical or canonical == effective_canonical or canonical in seen:
+            continue
+        seen.add(canonical)
+        unique_paths.append(path)
+    return unique_paths
 
 
 def canonical_relative_path(value: Any) -> str:

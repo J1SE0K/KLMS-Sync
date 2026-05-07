@@ -81,6 +81,7 @@ class ParsedPage:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    weekly_folders_enabled = parse_bool_arg(args.weekly_folders, "--weekly-folders")
     previous_state = (
         load_optional_json(Path(args.manifest_state_json))
         if args.manifest_state_json
@@ -91,6 +92,7 @@ def main() -> int:
         page_sets=[Path(path) for path in args.pages_json],
         output_root=Path(args.output_root),
         previous_state=previous_state,
+        weekly_folders_enabled=weekly_folders_enabled,
     )
 
     output_json = Path(args.output_json)
@@ -118,7 +120,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-markdown")
     parser.add_argument("--manifest-state-json")
     parser.add_argument("--output-manifest-state-json")
+    parser.add_argument("--weekly-folders", default="1")
     return parser
+
+
+def parse_bool_arg(value: Any, name: str) -> bool:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise SystemExit(f"{name} must be 1 or 0")
+
+
+def manifest_entry_style_version(weekly_folders_enabled: bool) -> str:
+    enabled_value = "1" if weekly_folders_enabled else "0"
+    return f"{MANIFEST_SOURCE_ENTRY_STYLE_VERSION}:weekly-folders={enabled_value}"
 
 
 def build_manifest(
@@ -126,6 +143,7 @@ def build_manifest(
     page_sets: list[Path],
     output_root: Path,
     previous_state: dict[str, Any] | None = None,
+    weekly_folders_enabled: bool = True,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     course_pages = load_pages(course_pages_json)
     prepared_course_pages = prepare_pages(course_pages)
@@ -151,6 +169,7 @@ def build_manifest(
     seen_urls: set[str] = set()
     seen_paths: set[str] = set()
     next_sources: dict[str, dict[str, Any]] = {}
+    entry_style_version = manifest_entry_style_version(weekly_folders_enabled)
 
     for parsed_page in prepared_pages:
         page = parsed_page.payload
@@ -173,6 +192,7 @@ def build_manifest(
             page_signature,
             current_courses,
             output_root,
+            entry_style_version,
         )
         if page_entries is None or entries_conflict(page_entries, seen_urls, seen_paths):
             page_entries = build_manifest_entries_for_page(
@@ -182,19 +202,27 @@ def build_manifest(
                 current_courses,
                 seen_urls,
                 seen_paths,
+                weekly_folders_enabled,
             )
         else:
             register_entries(page_entries, seen_urls, seen_paths)
 
         manifest.extend(page_entries)
         next_sources[source_url] = {
-            "entry_style_version": MANIFEST_SOURCE_ENTRY_STYLE_VERSION,
+            "entry_style_version": entry_style_version,
             "page_signature": page_signature,
             "entries": page_entries,
         }
 
     manifest.sort(key=lambda item: (item["course"], item["bucket"], item["relative_path"]))
-    return manifest, {"version": 1, "sources": next_sources}
+    return (
+        manifest,
+        {
+            "version": 1,
+            "layout": {"weekly_folders_enabled": weekly_folders_enabled},
+            "sources": next_sources,
+        },
+    )
 
 
 def load_pages(path: Path) -> list[dict[str, Any]]:
@@ -248,10 +276,11 @@ def reusable_manifest_entries(
     page_signature: str,
     current_courses: dict[str, Any],
     output_root: Path,
+    expected_entry_style_version: str,
 ) -> list[dict[str, Any]] | None:
     if str(previous_source_state.get("page_signature", "")) != page_signature:
         return None
-    if str(previous_source_state.get("entry_style_version", "")) != MANIFEST_SOURCE_ENTRY_STYLE_VERSION:
+    if str(previous_source_state.get("entry_style_version", "")) != expected_entry_style_version:
         return None
 
     entries = previous_source_state.get("entries", [])
@@ -327,6 +356,7 @@ def build_manifest_entries_for_page(
     current_courses: dict[str, Any],
     seen_urls: set[str],
     seen_paths: set[str],
+    weekly_folders_enabled: bool = True,
 ) -> list[dict[str, Any]]:
     page = parsed_page.payload
     soup = parsed_page.soup
@@ -363,7 +393,11 @@ def build_manifest_entries_for_page(
         activity_title = normalize_whitespace(target.get("activity_title", "")) or normalize_whitespace(link_text)
         course_dir = sanitize_path_component(course)
         bucket_dir = sanitize_path_component(bucket)
-        source_dir = sanitize_path_component(target_source_title or "untitled")
+        source_dir = (
+            sanitize_path_component(target_source_title or "untitled")
+            if weekly_folders_enabled
+            else ""
+        )
         relative_path = make_unique_relative_path(
             seen_paths,
             course_dir,
@@ -828,7 +862,11 @@ def make_unique_relative_path(
 
     while True:
         candidate_name = f"{stem}{suffix}" if counter == 1 else f"{stem} ({counter}){suffix}"
-        relative_path = str(Path(course_dir) / bucket_dir / source_dir / candidate_name)
+        path_parts = [course_dir, bucket_dir]
+        if source_dir:
+            path_parts.append(source_dir)
+        path_parts.append(candidate_name)
+        relative_path = str(PurePosixPath(*path_parts))
         if relative_path not in seen_paths:
             seen_paths.add(relative_path)
             return relative_path

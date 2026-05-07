@@ -30,6 +30,19 @@ FILE_NESTED2_STALE_SECONDS="${FILE_NESTED2_STALE_SECONDS:-86400}"
 FILE_NESTED_BACKGROUND_QUICK_LIMIT_RAW="${FILE_NESTED_BACKGROUND_QUICK_LIMIT:-}"
 FILE_NESTED2_BACKGROUND_QUICK_LIMIT_RAW="${FILE_NESTED2_BACKGROUND_QUICK_LIMIT:-}"
 FILE_KEEP_FRESH_DOWNLOADS="${FILE_KEEP_FRESH_DOWNLOADS:-1}"
+FILE_WEEKLY_FOLDERS_ENABLED_RAW="${FILE_WEEKLY_FOLDERS_ENABLED:-1}"
+case "${FILE_WEEKLY_FOLDERS_ENABLED_RAW:l}" in
+  1|true|yes|on)
+    FILE_WEEKLY_FOLDERS_ENABLED="1"
+    ;;
+  0|false|no|off)
+    FILE_WEEKLY_FOLDERS_ENABLED="0"
+    ;;
+  *)
+    print -u2 -- "Invalid FILE_WEEKLY_FOLDERS_ENABLED: $FILE_WEEKLY_FOLDERS_ENABLED_RAW"
+    exit 1
+    ;;
+esac
 FILE_PRIMARY_BOARD_ALWAYS_FETCH_ONLY="${FILE_PRIMARY_BOARD_ALWAYS_FETCH_ONLY:-1}"
 FETCH_AUTO_FULL_MIN_COVERAGE_RAW="${FETCH_AUTO_FULL_MIN_COVERAGE:-}"
 FETCH_AUTO_REQUIRE_LAST_FULL_RAW="${FETCH_AUTO_REQUIRE_LAST_FULL:-}"
@@ -538,7 +551,7 @@ build_linked_html_index() {
 }
 
 cd "$SCRIPT_DIR"
-log_files_timing "refresh start output_root=$OUTPUT_ROOT mode=$FILE_REFRESH_MODE force_download=$FILE_FORCE_DOWNLOAD"
+log_files_timing "refresh start output_root=$OUTPUT_ROOT mode=$FILE_REFRESH_MODE force_download=$FILE_FORCE_DOWNLOAD weekly_folders=$FILE_WEEKLY_FOLDERS_ENABLED"
 
 PREVIOUS_MANIFEST_COUNT="$(count_manifest_entries "$MANIFEST_JSON")"
 EXISTING_TRACKED_FILE_COUNT="$(count_tracked_output_files "$OUTPUT_ROOT")"
@@ -725,8 +738,31 @@ run_fetch_backend \
   "${FILE_NESTED2_FETCH_ALWAYS_PATTERNS[@]}"
 
 NESTED2_CHANGED_COUNT="$(summary_changed_count "$FILE_NESTED2_FETCH_SUMMARY_JSON")"
+MANIFEST_LAYOUT_MATCHES="$(
+  python3 - "$MANIFEST_STATE_JSON" "$FILE_WEEKLY_FOLDERS_ENABLED" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+state_path = Path(sys.argv[1])
+expected = sys.argv[2] == "1"
+if not state_path.exists():
+    print("0")
+    raise SystemExit
+
+try:
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+except Exception:
+    print("0")
+    raise SystemExit
+
+layout = state.get("layout", {}) if isinstance(state, dict) else {}
+print("1" if layout.get("weekly_folders_enabled") is expected else "0")
+PY
+)"
 MANIFEST_REUSED=0
 if [[ -s "$MANIFEST_JSON" \
+  && "$MANIFEST_LAYOUT_MATCHES" == "1" \
   && "$SEED_CHANGED_COUNT" == "0" \
   && "$NESTED_CHANGED_COUNT" == "0" \
   && "$NESTED2_CHANGED_COUNT" == "0" ]]; then
@@ -743,6 +779,7 @@ else
     --output-root "$OUTPUT_ROOT" \
     --manifest-state-json "$MANIFEST_STATE_JSON" \
     --output-manifest-state-json "$MANIFEST_STATE_JSON" \
+    --weekly-folders "$FILE_WEEKLY_FOLDERS_ENABLED" \
     --output-json "$MANIFEST_JSON" \
     --output-markdown "$MANIFEST_MD"
   log_files_timing "manifest build finish duration_s=$(($(date +%s) - manifest_started_epoch))"
