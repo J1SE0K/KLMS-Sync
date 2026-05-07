@@ -491,6 +491,20 @@ func paragraphSelectionRange(
     return LineRange(location: lineRange.location, length: lineRange.length + 1)
 }
 
+func uniqueLineRanges(_ ranges: [LineRange]) -> [LineRange] {
+    var seen = Set<String>()
+    var unique: [LineRange] = []
+    unique.reserveCapacity(ranges.count)
+    for range in ranges {
+        let key = "\(range.location):\(range.length)"
+        guard seen.insert(key).inserted else {
+            continue
+        }
+        unique.append(range)
+    }
+    return unique
+}
+
 func resolvedPlanLineRanges(
     currentText: String,
     bodyLines: [RenderLine]
@@ -2862,48 +2876,140 @@ func applyChecklistFormatting(
     currentText: String,
     resolvedNotices: [ResolvedRenderedNotice]
 ) {
-    func forceChecklistSelectionOn(lineRange: LineRange) {
-        let selectionRange = paragraphSelectionRange(in: currentText, lineRange: lineRange)
+    func lineIsChecklist(_ lineRange: LineRange) -> Bool {
+        let refreshedText: String = attr(context.textArea, kAXValueAttribute) ?? currentText
+        return checklistInfo(
+            textArea: context.textArea,
+            currentText: refreshedText,
+            range: lineRange
+        ) != nil
+    }
+
+    @discardableResult
+    func forceChecklistSelectionOn(selectionRange: LineRange, validationRanges: [LineRange]) -> Bool {
+        let initialStates = validationRanges.map { lineIsChecklist($0) }
+        if initialStates.allSatisfy({ $0 }) {
+            return true
+        }
+        if initialStates.contains(true), validationRanges.count > 1 {
+            return false
+        }
+
         guard selectRangeForFormatting(
             context: context,
             range: selectionRange,
             noteTitle: noteTitle,
             noteID: noteID
         ) else {
-            return
+            return false
         }
-        Thread.sleep(forTimeInterval: 0.12)
+        Thread.sleep(forTimeInterval: 0.04)
 
-        func lineIsChecklist() -> Bool {
-            let refreshedText: String = attr(context.textArea, kAXValueAttribute) ?? currentText
-            return checklistInfo(
-                textArea: context.textArea,
-                currentText: refreshedText,
-                range: lineRange
-            ) != nil
-        }
-
-        if lineIsChecklist() {
-            return
+        if validationRanges.allSatisfy(lineIsChecklist) {
+            return true
         }
 
         if let button = resolvedChecklistButton(for: context) {
             activateApplication(pid: elementPID(context.app))
             let _ = AXUIElementPerformAction(button, kAXPressAction as CFString)
-            Thread.sleep(forTimeInterval: 0.12)
-            if lineIsChecklist() {
-                return
+            Thread.sleep(forTimeInterval: 0.08)
+            if validationRanges.allSatisfy(lineIsChecklist) {
+                return true
             }
         }
 
         activateApplication(pid: elementPID(context.app))
         _ = pressMenuIfAvailable(context.app, checklistMenuTitles)
-        Thread.sleep(forTimeInterval: 0.12)
+        Thread.sleep(forTimeInterval: 0.08)
+        return validationRanges.allSatisfy(lineIsChecklist)
     }
 
-    let checklistRanges = resolvedNotices.flatMap { [$0.readRange, $0.importantRange] }
-    for range in checklistRanges {
-        forceChecklistSelectionOn(lineRange: range)
+    @discardableResult
+    func pressChecklistForSelection(_ selectionRange: LineRange) -> Bool {
+        guard selectRangeForFormatting(
+            context: context,
+            range: selectionRange,
+            noteTitle: noteTitle,
+            noteID: noteID
+        ) else {
+            return false
+        }
+        activateApplication(pid: elementPID(context.app))
+        if let button = resolvedChecklistButton(for: context),
+           AXUIElementPerformAction(button, kAXPressAction as CFString) == .success {
+            Thread.sleep(forTimeInterval: 0.045)
+            return true
+        }
+        let pressed = pressMenuIfAvailable(context.app, checklistMenuTitles)
+        Thread.sleep(forTimeInterval: 0.06)
+        return pressed
+    }
+
+    func checklistPairSelectionRange(readRange: LineRange, importantRange: LineRange) -> LineRange? {
+        guard readRange.length > 0, importantRange.length > 0 else {
+            return nil
+        }
+        let readSelection = paragraphSelectionRange(in: currentText, lineRange: readRange)
+        let importantSelection = paragraphSelectionRange(in: currentText, lineRange: importantRange)
+        let start = min(readSelection.location, importantSelection.location)
+        let end = max(
+            readSelection.location + readSelection.length,
+            importantSelection.location + importantSelection.length
+        )
+        guard end > start else {
+            return nil
+        }
+        return LineRange(location: start, length: end - start)
+    }
+
+    var fallbackRanges: [LineRange] = []
+    if batchChecklistFormattingEnabled {
+        timingLog("checklist_format_batch_start note=\(noteTitle) pairs=\(resolvedNotices.count)")
+        for resolved in resolvedNotices {
+            guard let pairRange = checklistPairSelectionRange(
+                readRange: resolved.readRange,
+                importantRange: resolved.importantRange
+            ) else {
+                fallbackRanges.append(resolved.readRange)
+                fallbackRanges.append(resolved.importantRange)
+                continue
+            }
+            if pressChecklistForSelection(pairRange) {
+                continue
+            }
+            fallbackRanges.append(resolved.readRange)
+            fallbackRanges.append(resolved.importantRange)
+        }
+        let postBatchText: String = attr(context.textArea, kAXValueAttribute) ?? currentText
+        for resolved in resolvedNotices {
+            if checklistInfo(
+                textArea: context.textArea,
+                currentText: postBatchText,
+                range: resolved.readRange,
+                expectedLabel: readChecklistLabel
+            ) == nil {
+                fallbackRanges.append(resolved.readRange)
+            }
+            if checklistInfo(
+                textArea: context.textArea,
+                currentText: postBatchText,
+                range: resolved.importantRange,
+                expectedLabel: importantChecklistLabel
+            ) == nil {
+                fallbackRanges.append(resolved.importantRange)
+            }
+        }
+        fallbackRanges = uniqueLineRanges(fallbackRanges)
+        timingLog("checklist_format_batch_finish note=\(noteTitle) fallback_lines=\(fallbackRanges.count)")
+    } else {
+        fallbackRanges = resolvedNotices.flatMap { [$0.readRange, $0.importantRange] }
+    }
+
+    for range in fallbackRanges {
+        _ = forceChecklistSelectionOn(
+            selectionRange: paragraphSelectionRange(in: currentText, lineRange: range),
+            validationRanges: [range]
+        )
     }
 }
 
@@ -3705,7 +3811,7 @@ func renderNativeNoteOnce(
         timingLog("readability_validation_targets_finish note=\(noteTitle) bold_targets=\(boldValidationTargets.count)")
     }
 
-    if ProcessInfo.processInfo.environment["NOTICE_NATIVE_DISABLE_UI_STYLE_FORMAT"] != "1" {
+    if uiStyleMenuFormattingEnabled {
         timingLog("style_apply_start note=\(noteTitle)")
         applyStyle(
             lineRange(plan.titleLineIndex, fallback: plan.titleRange),
@@ -3756,7 +3862,7 @@ func renderNativeNoteOnce(
         timingLog("style_apply_finish note=\(noteTitle) bold_targets=\(boldValidationTargets.count)")
     } else {
         timingLog(
-            "style_apply_skip note=\(noteTitle) reason=disabled_by_env notices=\(plan.renderedNotices.count) "
+            "style_apply_skip note=\(noteTitle) reason=rich_paste_default notices=\(plan.renderedNotices.count) "
                 + "lines=\(plan.bodyLines.count)"
         )
     }
@@ -3984,6 +4090,7 @@ func renderStateFile(
 ) -> NoticeRenderStateFile {
     NoticeRenderStateFile(
         version: nativeNoticeRenderStateVersion,
+        styleVersion: nativeNoticeRenderStyleVersion,
         updatedAt: timestamp,
         noteTitle: noteTitle,
         noteID: noteID,

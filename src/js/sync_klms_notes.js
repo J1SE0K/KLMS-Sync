@@ -6,6 +6,7 @@ const MARKER = "[[KLMS 자동 동기화]]";
 const REMINDER_MARKER_PREFIX = "KLMS_SYNC_ITEM_ID:";
 const LEGACY_REMINDER_MARKER_PREFIXES = ["KLMS_ASSIGN_ID:"];
 const REMINDER_MARKER_PREFIXES = [REMINDER_MARKER_PREFIX].concat(LEGACY_REMINDER_MARKER_PREFIXES);
+const NATIVE_NOTICE_RENDER_STYLE_VERSION = "2026-05-08-fast-rich-paste-batched-checklists-v2";
 let DEBUG_STDERR_ENABLED = false;
 const REMINDER_LIST_APPEARANCE = {
   "KLMS 과제": { color: "#0F766E", emblem: "" },
@@ -1585,8 +1586,18 @@ function updateNoticeNativeNote(
     if (stableSkip.skipped) {
       try {
         const formatOutputs = [
-          verifyNoticeNativeNoteReadableFormat(archiveNoteName, "archive", scriptDir),
-          verifyNoticeNativeNoteReadableFormat(noteName, "primary", scriptDir),
+          verifyNoticeNativeNoteReadableFormat(
+            archiveNoteName,
+            "archive",
+            scriptDir,
+            archiveNoticeRenderStateJsonPath
+          ),
+          verifyNoticeNativeNoteReadableFormat(
+            noteName,
+            "primary",
+            scriptDir,
+            noticeRenderStateJsonPath
+          ),
         ];
         const output = [stableSkip.output, ...formatOutputs].filter(Boolean).join("\n");
         debugStderr(String(output || "skip native notice notes stable-noop-after-capture"));
@@ -1630,7 +1641,8 @@ function updateNoticeNativeNote(
       const formatOutput = verifyNoticeNativeNoteReadableFormat(
         target.key === "archive" ? archiveNoteName : noteName,
         target.key,
-        scriptDir
+        scriptDir,
+        target.key === "archive" ? archiveNoticeRenderStateJsonPath : noticeRenderStateJsonPath
       );
       results.push({
         target: target.key,
@@ -1735,10 +1747,24 @@ function noteReadableStyleMetricsViaAppleScript(noteName, scriptDir) {
   return parseNoticeReadableStyleMetrics(output);
 }
 
-function verifyNoticeNativeNoteReadableFormat(noteName, targetKey, scriptDir) {
+function noticeRenderStyleVersion(renderStateJsonPath) {
+  if (!renderStateJsonPath || !fileExists(renderStateJsonPath)) {
+    return "";
+  }
+  try {
+    const state = JSON.parse(readText(renderStateJsonPath));
+    return String(state && state.style_version || "");
+  } catch (error) {
+    return "";
+  }
+}
+
+function verifyNoticeNativeNoteReadableFormat(noteName, targetKey, scriptDir, renderStateJsonPath) {
   const metrics = noteReadableStyleMetricsViaAppleScript(noteName, scriptDir);
+  const styleVersion = noticeRenderStyleVersion(renderStateJsonPath);
+  const usesFastRichPaste = styleVersion === NATIVE_NOTICE_RENDER_STYLE_VERSION;
   const minimumBoldTags = targetKey === "primary" ? 20 : 2;
-  const minimumLargeFontTags = targetKey === "primary" ? 20 : 1;
+  const minimumLargeFontTags = usesFastRichPaste ? 0 : targetKey === "primary" ? 20 : 1;
   if (
     metrics.boldTags < minimumBoldTags ||
     metrics.largeFontTags < minimumLargeFontTags
@@ -1753,7 +1779,8 @@ function verifyNoticeNativeNoteReadableFormat(noteName, targetKey, scriptDir) {
   return (
     `Verified native notice readability format: ${targetKey} ` +
     `bold_tags=${metrics.boldTags} font_size_tags=${metrics.fontSizeTags} ` +
-    `heading_tags=${metrics.headingTags} large_font_tags=${metrics.largeFontTags}`
+    `heading_tags=${metrics.headingTags} large_font_tags=${metrics.largeFontTags} ` +
+    `style_version=${styleVersion || "unknown"}`
   );
 }
 
@@ -1845,6 +1872,9 @@ function expectedNoticeNativeRenderState(digest, userState) {
 }
 
 function renderStateMatchesExpected(renderState, expected) {
+  if (String(renderState && renderState.style_version || "") !== NATIVE_NOTICE_RENDER_STYLE_VERSION) {
+    return false;
+  }
   const rendered = (renderState && renderState.rendered_notices) || [];
   if (!Array.isArray(rendered) || rendered.length !== expected.length) {
     return false;

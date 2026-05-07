@@ -132,6 +132,7 @@ struct RenderedNoticeState: Codable {
 
 struct NoticeRenderStateFile: Codable {
     let version: Int
+    let styleVersion: String?
     let updatedAt: String
     let noteTitle: String
     let noteID: String?
@@ -141,6 +142,7 @@ struct NoticeRenderStateFile: Codable {
 
     enum CodingKeys: String, CodingKey {
         case version
+        case styleVersion = "style_version"
         case updatedAt = "updated_at"
         case noteTitle = "note_title"
         case noteID = "note_id"
@@ -279,7 +281,7 @@ struct ResolvedRenderedNotice {
 let defaultNoteTitle = "KLMS 공지"
 let defaultArchiveNoteTitle = "KLMS 확인한 공지"
 let nativeNoticeRenderStateVersion = 2
-let nativeNoticeRenderStyleVersion = "2026-05-08-format-menu-font-size-verify"
+let nativeNoticeRenderStyleVersion = "2026-05-08-fast-rich-paste-batched-checklists-v2"
 let readChecklistLabel = "읽음"
 let importantChecklistLabel = "중요"
 let checklistMenuTitles = ["체크리스트", "Checklist"]
@@ -287,6 +289,11 @@ let noticeDebugEnabled = ProcessInfo.processInfo.environment["NOTICE_DEBUG_CAPTU
 let automationDebugEnabled = ProcessInfo.processInfo.environment["NOTICE_DEBUG_AUTOMATION"] == "1"
 let noticeTimingEnabled = ProcessInfo.processInfo.environment["NOTICE_TIMING"] == "1"
 let collapseNoticeSectionsEnabled = ProcessInfo.processInfo.environment["NOTICE_COLLAPSE_SECTIONS"] == "1"
+let uiStyleMenuFormattingEnabled =
+    ProcessInfo.processInfo.environment["NOTICE_NATIVE_ENABLE_UI_STYLE_FORMAT"] == "1"
+    && ProcessInfo.processInfo.environment["NOTICE_NATIVE_DISABLE_UI_STYLE_FORMAT"] != "1"
+let batchChecklistFormattingEnabled =
+    ProcessInfo.processInfo.environment["NOTICE_NATIVE_DISABLE_BATCH_CHECKLIST_FORMAT"] != "1"
 let pasteboardSettleUsec: useconds_t = 35_000
 let pasteSettleUsec: useconds_t = 70_000
 let initialEditorClearDelay: TimeInterval = 0.12

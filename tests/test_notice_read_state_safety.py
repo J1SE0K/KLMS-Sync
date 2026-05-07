@@ -42,20 +42,42 @@ class NoticeReadStateSafetyTests(unittest.TestCase):
         self.assertIn("displayMode == .archive && readChecked", text)
         self.assertIn("plaintextHash(for: currentText) != expectedPlaintextHash", text)
 
-    def test_large_notice_render_uses_rich_paste_and_format_menu_styles(self) -> None:
-        text = (
+    def test_large_notice_render_uses_rich_paste_and_optional_format_menu_styles(self) -> None:
+        renderer = (
             PROJECT_DIR / "src" / "swift" / "update_notice_native_note.swift"
         ).read_text(encoding="utf-8")
+        support = (
+            PROJECT_DIR / "src" / "swift" / "notice_native_note_support.swift"
+        ).read_text(encoding="utf-8")
 
-        self.assertIn("html: html, attributedText: attributed", text)
-        self.assertIn("font-size:\\(cssFontSize(line.fontSize))pt", text)
-        self.assertIn("NSFont.boldSystemFont(ofSize: line.fontSize)", text)
-        self.assertIn('NOTICE_NATIVE_DISABLE_UI_STYLE_FORMAT', text)
-        self.assertNotIn('NOTICE_NATIVE_ENABLE_UI_STYLE_FALLBACK"] == "1"', text)
-        self.assertIn('menuItems: ["제목", "Title"]', text)
-        self.assertIn('menuItems: ["머리말", "Heading"]', text)
-        self.assertIn('menuItems: ["부머리말", "Subheading"]', text)
-        self.assertIn("readability_validation_targets_finish", text)
+        self.assertIn("html: html, attributedText: attributed", renderer)
+        self.assertIn("font-size:\\(cssFontSize(line.fontSize))pt", renderer)
+        self.assertIn("NSFont.boldSystemFont(ofSize: line.fontSize)", renderer)
+        self.assertIn("uiStyleMenuFormattingEnabled", renderer)
+        self.assertIn('NOTICE_NATIVE_ENABLE_UI_STYLE_FORMAT', support)
+        self.assertIn('NOTICE_NATIVE_DISABLE_UI_STYLE_FORMAT', support)
+        self.assertNotIn('NOTICE_NATIVE_ENABLE_UI_STYLE_FALLBACK"] == "1"', renderer)
+        self.assertIn('menuItems: ["제목", "Title"]', renderer)
+        self.assertIn('menuItems: ["머리말", "Heading"]', renderer)
+        self.assertIn('menuItems: ["부머리말", "Subheading"]', renderer)
+        self.assertIn("reason=rich_paste_default", renderer)
+        self.assertIn("readability_validation_targets_finish", renderer)
+
+    def test_notice_render_batches_adjacent_checklist_lines(self) -> None:
+        renderer = (
+            PROJECT_DIR / "src" / "swift" / "update_notice_native_note.swift"
+        ).read_text(encoding="utf-8")
+        support = (
+            PROJECT_DIR / "src" / "swift" / "notice_native_note_support.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("batchChecklistFormattingEnabled", support)
+        self.assertIn("NOTICE_NATIVE_DISABLE_BATCH_CHECKLIST_FORMAT", support)
+        self.assertIn("styleVersion = \"style_version\"", support)
+        self.assertIn("checklistPairSelectionRange", renderer)
+        self.assertIn("checklist_format_batch_start", renderer)
+        self.assertIn("fallbackRanges.append(resolved.readRange)", renderer)
+        self.assertIn("styleVersion: nativeNoticeRenderStyleVersion", renderer)
 
     def test_notice_render_assigns_readability_font_hierarchy(self) -> None:
         support = (
@@ -117,6 +139,9 @@ class NoticeReadStateSafetyTests(unittest.TestCase):
         self.assertIn("large_font_tags", text)
         self.assertIn("minimumLargeFontTags", text)
         self.assertIn('targetKey === "primary" ? 20 : 1', text)
+        self.assertIn("NATIVE_NOTICE_RENDER_STYLE_VERSION", text)
+        self.assertIn("noticeRenderStyleVersion", text)
+        self.assertIn("style_version", text)
         self.assertNotIn("return body of note", text)
 
 
