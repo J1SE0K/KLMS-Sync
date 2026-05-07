@@ -79,6 +79,14 @@ class NoticeReadStateSafetyTests(unittest.TestCase):
         self.assertIn("fallbackRanges.append(resolved.readRange)", renderer)
         self.assertIn("styleVersion: nativeNoticeRenderStyleVersion", renderer)
 
+    def test_archive_empty_state_uses_guidance_copy(self) -> None:
+        renderer = (
+            PROJECT_DIR / "src" / "swift" / "update_notice_native_note.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn("확인한 공지가 없어.", renderer)
+        self.assertIn("읽음만 체크한 공지는 다음 동기화 때 여기에 모여.", renderer)
+
     def test_notice_render_assigns_readability_font_hierarchy(self) -> None:
         support = (
             PROJECT_DIR / "src" / "swift" / "notice_native_note_support.swift"

@@ -3475,7 +3475,7 @@ func buildRenderPlan(
     }
 
     if mode == .archive && unreadCourses.isEmpty {
-        appendLine("확인한 공지가 없어.")
+        appendLine("읽음만 체크한 공지는 다음 동기화 때 여기에 모여.")
     }
 
     let lines = bodyLines.map(\.text)
