@@ -286,11 +286,21 @@ func displayParagraphs(_ notice: NoticeDigestEntry) -> [String] {
         .replacingOccurrences(of: "\r\n", with: "\n")
         .replacingOccurrences(of: "\r", with: "\n")
         .replacingOccurrences(
+            of: #"(?im)^\s*-{20,}\s*$"#,
+            with: "----------",
+            options: .regularExpression
+        )
+        .replacingOccurrences(
+            of: #"(?i)\((\d+)\s*\n\s*-\s*(\d+[^)]*)\)"#,
+            with: "($1-$2)",
+            options: .regularExpression
+        )
+        .replacingOccurrences(
             of: #"(?i)(Time:\s*[^\n]+)\n{2,}-\s+(\d{1,2}:\d{2}\s*(?:am|pm)?)"#,
             with: "$1 - $2",
             options: .regularExpression
         )
-        .replacingOccurrences(of: #"\s+(?=##\s+)"#, with: "\n\n", options: .regularExpression)
+        .replacingOccurrences(of: #"\s+(?=#{1,6}\s+)"#, with: "\n\n", options: .regularExpression)
         .replacingOccurrences(
             of: #"\s+(?=(?:[1-9]|1\d|20)\.\s+[A-Z가-힣])"#,
             with: "\n\n",
@@ -305,6 +315,11 @@ func displayParagraphs(_ notice: NoticeDigestEntry) -> [String] {
             of: #"\s+(?=(?:Date(?:\s*&\s*Time)?|Time|Location|Place|Venue|Room|Range|Coverage|Exam\s*Range)\s*:)"#,
             with: "\n\n",
             options: [.regularExpression, .caseInsensitive]
+        )
+        .replacingOccurrences(
+            of: #"(?i)\b(Original\s+due|New\s+due|Original|New|Due)\n\n(date\s*:)"#,
+            with: "$1 $2",
+            options: .regularExpression
         )
         .replacingOccurrences(
             of: #"\s+(?=[•⦁]\s*)"#,
@@ -877,7 +892,7 @@ func cssFontSize(_ fontSize: CGFloat) -> String {
 
 func htmlStyle(for line: RenderLine) -> String {
     let fontWeight = line.isBold ? "700" : "400"
-    return "font-size:\(cssFontSize(line.fontSize))pt;font-weight:\(fontWeight);line-height:1.35;"
+    return "font-size:\(cssFontSize(line.fontSize))pt;font-weight:\(fontWeight);line-height:1.42;"
 }
 
 func paste(_ app: AXUIElement, text: String, html: String? = nil, attributedText: NSAttributedString? = nil) {
@@ -3363,7 +3378,7 @@ func buildRenderPlan(
                 let attachmentName = "- \(attachmentDisplayName(attachment))"
                 appendLine(attachmentName)
                 if let displayPath = attachmentDisplayPath(attachment) {
-                    let pathLine = "저장 위치: \(displayPath)"
+                    let pathLine = "  위치: \(displayPath)"
                     appendLine(pathLine)
                 }
             }
@@ -3374,7 +3389,7 @@ func buildRenderPlan(
             for attachmentName in fallbackAttachmentNames(notice.attachments) {
                 let attachmentLine = "- \(attachmentName)"
                 appendLine(attachmentLine)
-                let pathLine = "저장 위치: 동기화된 파일 없음"
+                let pathLine = "  위치: 동기화된 파일 없음"
                 appendLine(pathLine)
             }
         }
@@ -3417,12 +3432,8 @@ func buildRenderPlan(
         )
     }
 
-    if mode == .primary {
-        importantHeadingLineIndexes.append(bodyLines.count)
-        let importantHeading = "중요 공지 (\(visibleImportantCount)건)"
-        appendLine(importantHeading, bold: true, fontSize: noticeSectionHeadingFontSize)
-        appendLine("")
-        for course in importantCourses {
+    func appendCourseGroup(_ courses: [DisplayCourse]) {
+        for (courseIndex, course) in courses.enumerated() {
             courseHeadingLineIndexes.append(bodyLines.count)
             let heading = "\(course.title) (\(course.notices.count)건)"
             appendLine(heading, bold: true, fontSize: noticeCourseHeadingFontSize)
@@ -3430,48 +3441,60 @@ func buildRenderPlan(
             for notice in course.notices {
                 appendNotice(notice)
             }
-            appendLine("")
-        }
-        appendLine("")
-        appendLine("")
-
-        appendSectionDivider()
-        appendLine("")
-        freshHeadingLineIndexes.append(bodyLines.count)
-        let freshHeading = "새로운 공지 (\(visibleFreshCount)건)"
-        appendLine(freshHeading, bold: true, fontSize: noticeSectionHeadingFontSize)
-        appendLine("")
-        for course in freshCourses {
-            courseHeadingLineIndexes.append(bodyLines.count)
-            let heading = "\(course.title) (\(course.notices.count)건)"
-            appendLine(heading, bold: true, fontSize: noticeCourseHeadingFontSize)
-            appendLine("")
-            for notice in course.notices {
-                appendNotice(notice)
+            if courseIndex < courses.count - 1 {
+                appendLine("")
             }
-            appendLine("")
         }
-        appendLine("")
-
-        appendSectionDivider()
-        appendLine("")
-        unreadHeadingLineIndexes.append(bodyLines.count)
-        let unreadHeading = "읽지 않은 공지 (\(visibleUnreadCount)건)"
-        appendLine(unreadHeading, bold: true, fontSize: noticeSectionHeadingFontSize)
-        appendLine("")
     }
 
-    for (courseIndex, course) in unreadCourses.enumerated() {
-        courseHeadingLineIndexes.append(bodyLines.count)
-        let heading = "\(course.title) (\(course.notices.count)건)"
-        appendLine(heading, bold: true, fontSize: noticeCourseHeadingFontSize)
-        appendLine("")
-        for notice in course.notices {
-            appendNotice(notice)
-        }
-        if courseIndex < unreadCourses.count - 1 {
+    if mode == .primary {
+        var didAppendPrimarySection = false
+
+        func appendPrimarySection(
+            title: String,
+            count: Int,
+            courses: [DisplayCourse],
+            headingIndexes: inout [Int]
+        ) {
+            guard count > 0 else {
+                return
+            }
+            if didAppendPrimarySection {
+                appendLine("")
+                appendSectionDivider()
+                appendLine("")
+            }
+            headingIndexes.append(bodyLines.count)
+            appendLine("\(title) (\(count)건)", bold: true, fontSize: noticeSectionHeadingFontSize)
             appendLine("")
+            appendCourseGroup(courses)
+            didAppendPrimarySection = true
         }
+
+        appendPrimarySection(
+            title: "중요 공지",
+            count: visibleImportantCount,
+            courses: importantCourses,
+            headingIndexes: &importantHeadingLineIndexes
+        )
+        appendPrimarySection(
+            title: "새로운 공지",
+            count: visibleFreshCount,
+            courses: freshCourses,
+            headingIndexes: &freshHeadingLineIndexes
+        )
+        appendPrimarySection(
+            title: "읽지 않은 공지",
+            count: visibleUnreadCount,
+            courses: unreadCourses,
+            headingIndexes: &unreadHeadingLineIndexes
+        )
+
+        if !didAppendPrimarySection {
+            appendLine("표시할 공지가 없습니다.")
+        }
+    } else {
+        appendCourseGroup(unreadCourses)
     }
 
     if mode == .archive && unreadCourses.isEmpty {

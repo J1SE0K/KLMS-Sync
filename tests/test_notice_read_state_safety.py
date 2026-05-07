@@ -1,3 +1,4 @@
+import re
 import unittest
 from pathlib import Path
 
@@ -115,6 +116,35 @@ class NoticeReadStateSafetyTests(unittest.TestCase):
             renderer,
         )
         self.assertIn("cssFontSize(line.fontSize)", renderer)
+        self.assertIn("let noticeBodyFontSize: CGFloat = 14", support)
+        self.assertIn("line-height:1.42", renderer)
+
+    def test_notice_layout_skips_empty_sections_and_compacts_body_noise(self) -> None:
+        renderer = (
+            PROJECT_DIR / "src" / "swift" / "update_notice_native_note.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("func appendPrimarySection", renderer)
+        self.assertIn("guard count > 0 else", renderer)
+        self.assertIn("표시할 공지가 없습니다.", renderer)
+        self.assertIn("(?im)^\\s*-{20,}\\s*$", renderer)
+        self.assertIn("Original\\s+due|New\\s+due|Original|New|Due", renderer)
+        self.assertIn("(?=#{1,6}\\s+)", renderer)
+        self.assertIn('"  위치: \\(displayPath)"', renderer)
+
+    def test_notice_style_version_is_shared_between_swift_and_js(self) -> None:
+        support = (
+            PROJECT_DIR / "src" / "swift" / "notice_native_note_support.swift"
+        ).read_text(encoding="utf-8")
+        js = (PROJECT_DIR / "src" / "js" / "sync_klms_notes.js").read_text(
+            encoding="utf-8"
+        )
+
+        swift_match = re.search(r'nativeNoticeRenderStyleVersion = "([^"]+)"', support)
+        js_match = re.search(r'NATIVE_NOTICE_RENDER_STYLE_VERSION = "([^"]+)"', js)
+        self.assertIsNotNone(swift_match)
+        self.assertIsNotNone(js_match)
+        self.assertEqual(swift_match.group(1), js_match.group(1))
 
     def test_swift_process_capture_does_not_pipe_large_outputs(self) -> None:
         text = (

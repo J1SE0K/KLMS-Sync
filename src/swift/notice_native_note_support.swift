@@ -281,7 +281,7 @@ struct ResolvedRenderedNotice {
 let defaultNoteTitle = "KLMS 공지"
 let defaultArchiveNoteTitle = "KLMS 확인한 공지"
 let nativeNoticeRenderStateVersion = 2
-let nativeNoticeRenderStyleVersion = "2026-05-08-fast-rich-paste-batched-checklists-v5"
+let nativeNoticeRenderStyleVersion = "2026-05-08-readable-notice-layout-v1"
 let readChecklistLabel = "읽음"
 let importantChecklistLabel = "중요"
 let checklistMenuTitles = ["체크리스트", "Checklist"]
@@ -299,13 +299,13 @@ let pasteSettleUsec: useconds_t = 70_000
 let initialEditorClearDelay: TimeInterval = 0.12
 let initialEditorFocusDelay: TimeInterval = 0.04
 let finalChecklistDisableDelay: TimeInterval = 0.12
-let noticeBodyFontSize: CGFloat = 13
+let noticeBodyFontSize: CGFloat = 14
 let noticeMetaFontSize: CGFloat = 12
-let noticeSummaryFontSize: CGFloat = 13
-let noticeItemTitleFontSize: CGFloat = 15
-let noticeCourseHeadingFontSize: CGFloat = 16
-let noticeSectionHeadingFontSize: CGFloat = 18
-let noticeDocumentTitleFontSize: CGFloat = 22
+let noticeSummaryFontSize: CGFloat = 14
+let noticeItemTitleFontSize: CGFloat = 16
+let noticeCourseHeadingFontSize: CGFloat = 17
+let noticeSectionHeadingFontSize: CGFloat = 19
+let noticeDocumentTitleFontSize: CGFloat = 23
 
 func fail(_ message: String) -> Never {
     fputs("\(message)\n", stderr)
