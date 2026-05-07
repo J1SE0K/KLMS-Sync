@@ -440,6 +440,65 @@ klms_run_sync_scope() {
     "${extra_args[@]}"
 }
 
+klms_run_sync_scope_entrypoint() {
+  local scope="$1"
+  local sync_output
+
+  klms_acquire_shared_sync_lock
+  trap 'klms_release_shared_sync_lock' EXIT
+  klms_require_login
+  sync_output="$(klms_run_sync_scope "$scope")"
+  print -r -- "$sync_output"
+  if [[ "$sync_output" != status=ok* ]]; then
+    return 1
+  fi
+  klms_cleanup_runtime_tmp_if_enabled
+}
+
+klms_export_shared_sync_cache_defaults() {
+  export KLMS_RUN_STARTED_EPOCH="${KLMS_RUN_STARTED_EPOCH:-$(date +%s)}"
+  export KLMS_SHARED_COURSE_PAGES_JSON="${KLMS_SHARED_COURSE_PAGES_JSON:-$CACHE_DIR/core/course_pages.json}"
+  export KLMS_SHARED_ALL_WEEK_COURSE_PAGES_JSON="${KLMS_SHARED_ALL_WEEK_COURSE_PAGES_JSON:-$CACHE_DIR/core/all_week_course_pages.json}"
+  export KLMS_SHARED_SUPPLEMENTAL_PRIMARY_PAGES_JSON="${KLMS_SHARED_SUPPLEMENTAL_PRIMARY_PAGES_JSON:-$CACHE_DIR/core/supplemental_primary_pages.json}"
+}
+
+klms_prepare_prefetched_dashboard_for_namespaces() {
+  local prefetched_dashboard="$CACHE_DIR/dashboard.json"
+  local namespace
+
+  for namespace in "$@"; do
+    mkdir -p "$CACHE_DIR/$namespace"
+    if [[ -s "$prefetched_dashboard" ]]; then
+      cp "$prefetched_dashboard" "$CACHE_DIR/$namespace/dashboard.json"
+    fi
+  done
+}
+
+klms_run_serial_child_job() {
+  local job_name="$1"
+  local script_path="$2"
+  local started_epoch
+  local finished_epoch
+  local job_status=0
+
+  started_epoch="$(date +%s)"
+  print -r -- "== $job_name start $(date '+%Y-%m-%d %H:%M:%S %Z') =="
+  (
+    cd "$SCRIPT_DIR"
+    /usr/bin/env -u KLMS_SHARED_SYNC_LOCK_HELD -u KLMS_SHARED_SYNC_LOCK_DIR \
+      KLMS_USE_EXISTING_DASHBOARD=1 \
+      KLMS_PARENT_LOGIN_PREFLIGHT_READY=1 \
+      KLMS_RUN_STARTED_EPOCH="$KLMS_RUN_STARTED_EPOCH" \
+      KLMS_SHARED_COURSE_PAGES_JSON="$KLMS_SHARED_COURSE_PAGES_JSON" \
+      KLMS_SHARED_ALL_WEEK_COURSE_PAGES_JSON="$KLMS_SHARED_ALL_WEEK_COURSE_PAGES_JSON" \
+      KLMS_SHARED_SUPPLEMENTAL_PRIMARY_PAGES_JSON="$KLMS_SHARED_SUPPLEMENTAL_PRIMARY_PAGES_JSON" \
+      /bin/zsh "$script_path" "$CONFIG_PATH"
+  ) || job_status=$?
+  finished_epoch="$(date +%s)"
+  print -r -- "== $job_name finish $(date '+%Y-%m-%d %H:%M:%S %Z') status=$job_status duration_s=$((finished_epoch - started_epoch)) =="
+  return "$job_status"
+}
+
 klms_cleanup_runtime_tmp_if_enabled() {
   if [[ "${KLMS_RUNTIME_TMP_CLEANUP_ENABLED:-1}" != "1" ]]; then
     return 0
@@ -447,5 +506,15 @@ klms_cleanup_runtime_tmp_if_enabled() {
 
   local max_age_hours="${KLMS_RUNTIME_TMP_MAX_AGE_HOURS:-24}"
   KLMS_RUNTIME_TMP_CLEANUP_TARGET="$TMP_DIR" \
+    /bin/zsh "$KLMS_SH_DIR/cleanup_runtime_tmp.sh" --max-age-hours "$max_age_hours" >/dev/null 2>&1 || true
+}
+
+klms_cleanup_tmp_root_if_enabled() {
+  if [[ "${KLMS_RUNTIME_TMP_CLEANUP_ENABLED:-1}" != "1" ]]; then
+    return 0
+  fi
+
+  local max_age_hours="${KLMS_RUNTIME_TMP_MAX_AGE_HOURS:-24}"
+  KLMS_RUNTIME_TMP_CLEANUP_TARGET="$TMP_ROOT_DIR" \
     /bin/zsh "$KLMS_SH_DIR/cleanup_runtime_tmp.sh" --max-age-hours "$max_age_hours" >/dev/null 2>&1 || true
 }

@@ -40,6 +40,8 @@ if max_age_hours_raw:
 cutoff_epoch = None if max_age_hours is None else time.time() - (max_age_hours * 3600)
 
 remove_names = {
+    ".DS_Store",
+    "__pycache__",
     "pycache",
     "swift-module-cache",
     "download_test_archive",
@@ -48,6 +50,8 @@ remove_names = {
 }
 
 remove_globs = [
+    "*.pyc",
+    "*.pyo",
     "*-urls.txt",
     "*test*.txt",
     "dashboard_urls.txt",

@@ -15,13 +15,8 @@ run_id="$(date +%Y%m%d-%H%M%S)"
 log_dir="$TMP_DIR/run-all-$run_id"
 mkdir -p "$log_dir"
 
-prefetched_dashboard="$CACHE_DIR/dashboard.json"
-for namespace in core notice files; do
-  mkdir -p "$CACHE_DIR/$namespace"
-  if [[ -s "$prefetched_dashboard" ]]; then
-    cp "$prefetched_dashboard" "$CACHE_DIR/$namespace/dashboard.json"
-  fi
-done
+klms_export_shared_sync_cache_defaults
+klms_prepare_prefetched_dashboard_for_namespaces core notice files
 
 core_log="$log_dir/core.log"
 notice_log="$log_dir/notice.log"
@@ -89,8 +84,4 @@ if (( overall_exit != 0 )); then
   exit 1
 fi
 
-if [[ "${KLMS_RUNTIME_TMP_CLEANUP_ENABLED:-1}" == "1" ]]; then
-  max_age_hours="${KLMS_RUNTIME_TMP_MAX_AGE_HOURS:-24}"
-  KLMS_RUNTIME_TMP_CLEANUP_TARGET="$TMP_ROOT_DIR" \
-    /bin/zsh "$KLMS_SH_DIR/cleanup_runtime_tmp.sh" --max-age-hours "$max_age_hours" >/dev/null 2>&1 || true
-fi
+klms_cleanup_tmp_root_if_enabled
