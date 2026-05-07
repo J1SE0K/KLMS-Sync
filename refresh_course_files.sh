@@ -70,6 +70,7 @@ MANIFEST_STATE_JSON="$CACHE_DIR/course_file_manifest_state.json"
 DOWNLOAD_LOG_JSON="$CACHE_DIR/course_file_download_log.json"
 DOWNLOAD_RESULT_JSON="$CACHE_DIR/course_file_download_result.json"
 PRUNE_RESULT_JSON="$CACHE_DIR/course_file_prune_result.json"
+ARCHIVE_PRUNE_RESULT_JSON="$CACHE_DIR/course_file_archive_prune_result.json"
 CLEANUP_RESULT_JSON="$CACHE_DIR/course_file_cleanup_result.json"
 SYNC_PREVIEW_JSON="$CACHE_DIR/course_file_sync_preview.json"
 QUARANTINE_REPORT_JSON="$CACHE_DIR/course_file_quarantine_report.json"
@@ -79,6 +80,7 @@ FILE_NESTED2_FETCH_SUMMARY_JSON="$WORK_CACHE_DIR/file_nested_round2_fetch_summar
 FILE_COURSE_FETCH_SUMMARY_JSON="$WORK_CACHE_DIR/course_fetch_summary.json"
 FILE_ALL_WEEK_COURSE_FETCH_SUMMARY_JSON="$WORK_CACHE_DIR/all_week_course_fetch_summary.json"
 OUTPUT_ROOT="$SCRIPT_DIR/course_files"
+DOWNLOAD_ARCHIVE_ROOT="$HOME/Downloads/KLMS Files"
 SHARED_COURSE_PAGES_JSON="${KLMS_SHARED_COURSE_PAGES_JSON:-$CACHE_DIR/core/course_pages.json}"
 SHARED_ALL_WEEK_COURSE_PAGES_JSON="${KLMS_SHARED_ALL_WEEK_COURSE_PAGES_JSON:-$CACHE_DIR/core/all_week_course_pages.json}"
 SHARED_SUPPLEMENTAL_PRIMARY_PAGES_JSON="${KLMS_SHARED_SUPPLEMENTAL_PRIMARY_PAGES_JSON:-$CACHE_DIR/core/supplemental_primary_pages.json}"
@@ -834,7 +836,7 @@ python3 "$KLMS_PYTHON_DIR/build_course_file_sync_preview.py" \
   --manifest-json "$MANIFEST_JSON" \
   --output-root "$OUTPUT_ROOT" \
   --download-log-json "$DOWNLOAD_LOG_JSON" \
-  --download-archive-root "$HOME/Downloads/KLMS Files" \
+  --download-archive-root "$DOWNLOAD_ARCHIVE_ROOT" \
   --output-json "$SYNC_PREVIEW_JSON"
 log_files_timing "file preview finish duration_s=$(($(date +%s) - preview_started_epoch))"
 
@@ -863,7 +865,7 @@ if ! is_truthy "$FILE_FORCE_DOWNLOAD" \
     "$OUTPUT_ROOT" \
     "$DOWNLOAD_LOG_JSON" \
     "$DOWNLOAD_RESULT_JSON" \
-    "$HOME/Downloads/KLMS Files"; then
+    "$DOWNLOAD_ARCHIVE_ROOT"; then
   log_files_timing "download skipped existing_complete=1 duration_s=$(($(date +%s) - download_started_epoch))"
 else
   /bin/zsh "$KLMS_SH_DIR/run_download_files_step.sh" \
@@ -871,7 +873,7 @@ else
     "$MANIFEST_JSON" \
     "$OUTPUT_ROOT" \
     "$DOWNLOAD_LOG_JSON" \
-    "$HOME/Downloads/KLMS Files" \
+    "$DOWNLOAD_ARCHIVE_ROOT" \
     "$DOWNLOAD_RESULT_JSON" \
     "$FILE_DOWNLOAD_TIMEOUT_SECONDS" \
     "$FILE_MAX_DOWNLOAD_ATTEMPTS" \
@@ -908,12 +910,21 @@ python3 "$KLMS_PYTHON_DIR/prune_course_files.py" \
   > "$PRUNE_RESULT_JSON"
 log_files_timing "prune finish duration_s=$(($(date +%s) - prune_started_epoch))"
 
+log_files_timing "archive prune start root=$DOWNLOAD_ARCHIVE_ROOT"
+archive_prune_started_epoch="$(date +%s)"
+python3 "$KLMS_PYTHON_DIR/prune_course_files.py" \
+  --manifest-json "$MANIFEST_JSON" \
+  --root "$DOWNLOAD_ARCHIVE_ROOT" \
+  > "$ARCHIVE_PRUNE_RESULT_JSON"
+log_files_timing "archive prune finish duration_s=$(($(date +%s) - archive_prune_started_epoch))"
+
 cleanup_args=(
   /usr/bin/osascript
   -l
   JavaScript
   "$KLMS_JS_DIR/cleanup_tracked_downloads.js"
   "--manifest=$DOWNLOAD_LOG_JSON"
+  "--preserve-destinations"
 )
 case "${FILE_KEEP_FRESH_DOWNLOADS:l}" in
   1|true|yes|on)
@@ -925,7 +936,7 @@ cleanup_started_epoch="$(date +%s)"
 "${cleanup_args[@]}" > "$CLEANUP_RESULT_JSON"
 log_files_timing "cleanup finish duration_s=$(($(date +%s) - cleanup_started_epoch))"
 
-python3 - "$DOWNLOAD_RESULT_JSON" "$PRUNE_RESULT_JSON" "$CLEANUP_RESULT_JSON" <<'PY'
+python3 - "$DOWNLOAD_RESULT_JSON" "$PRUNE_RESULT_JSON" "$ARCHIVE_PRUNE_RESULT_JSON" "$CLEANUP_RESULT_JSON" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -958,19 +969,31 @@ print(
     f"deleted_dir_count={prune.get('deleted_dir_count', 0)}"
 )
 
-cleanup = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
+archive_prune = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
+print(
+    "archive-prune-summary "
+    f"tracked_files={archive_prune.get('tracked_files', 0)} "
+    f"actual_files_after={archive_prune.get('actual_files_after', 0)} "
+    f"deleted_file_count={archive_prune.get('deleted_file_count', 0)} "
+    f"deleted_dir_count={archive_prune.get('deleted_dir_count', 0)}"
+)
+
+cleanup = json.loads(Path(sys.argv[4]).read_text(encoding="utf-8"))
 actions = cleanup.get("actions", [])
 deleted = sum(1 for item in actions if item.get("action") == "deleted")
 restored = sum(1 for item in actions if item.get("action") == "restored")
 already_missing = sum(1 for item in actions if item.get("action") == "already-missing")
 kept_fresh = sum(1 for item in actions if item.get("action") == "kept-fresh")
+preserved = sum(1 for item in actions if item.get("action") == "preserved")
 print(
     "cleanup-summary "
     f"tracked_entries={cleanup.get('fileCount', 0)} "
     f"deleted={deleted} "
     f"kept_fresh={kept_fresh} "
+    f"preserved={preserved} "
     f"restored={restored} "
     f"already_missing={already_missing}"
 )
 PY
+klms_cleanup_runtime_tmp_if_enabled
 log_files_timing "refresh finish"

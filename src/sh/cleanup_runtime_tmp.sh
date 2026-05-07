@@ -90,7 +90,7 @@ for child in list(tmp_dir.rglob("*")):
             deleted_files += 1
 
 for pattern in remove_globs:
-    for path in list(tmp_dir.glob(pattern)):
+    for path in list(tmp_dir.rglob(pattern)):
         if not path.exists():
             continue
         if path.is_dir():

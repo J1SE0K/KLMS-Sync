@@ -45,6 +45,8 @@ klms_init_context() {
   local env_file_force_download="${FILE_FORCE_DOWNLOAD:-}"
   local env_file_keep_fresh_downloads_set="${+FILE_KEEP_FRESH_DOWNLOADS}"
   local env_file_keep_fresh_downloads="${FILE_KEEP_FRESH_DOWNLOADS:-}"
+  local env_file_weekly_folders_enabled_set="${+FILE_WEEKLY_FOLDERS_ENABLED}"
+  local env_file_weekly_folders_enabled="${FILE_WEEKLY_FOLDERS_ENABLED:-}"
 
   if [[ -f "$CONFIG_PATH" ]]; then
     source "$CONFIG_PATH"
@@ -53,6 +55,7 @@ klms_init_context() {
   (( env_file_refresh_mode_set )) && FILE_REFRESH_MODE="$env_file_refresh_mode"
   (( env_file_force_download_set )) && FILE_FORCE_DOWNLOAD="$env_file_force_download"
   (( env_file_keep_fresh_downloads_set )) && FILE_KEEP_FRESH_DOWNLOADS="$env_file_keep_fresh_downloads"
+  (( env_file_weekly_folders_enabled_set )) && FILE_WEEKLY_FOLDERS_ENABLED="$env_file_weekly_folders_enabled"
 
   runtime_namespace="${KLMS_RUNTIME_NAMESPACE:-$(klms_default_runtime_namespace "$entry_path")}"
 
@@ -504,7 +507,7 @@ klms_cleanup_runtime_tmp_if_enabled() {
     return 0
   fi
 
-  local max_age_hours="${KLMS_RUNTIME_TMP_MAX_AGE_HOURS:-24}"
+  local max_age_hours="${KLMS_RUNTIME_TMP_MAX_AGE_HOURS:-0}"
   KLMS_RUNTIME_TMP_CLEANUP_TARGET="$TMP_DIR" \
     /bin/zsh "$KLMS_SH_DIR/cleanup_runtime_tmp.sh" --max-age-hours "$max_age_hours" >/dev/null 2>&1 || true
 }
@@ -514,7 +517,7 @@ klms_cleanup_tmp_root_if_enabled() {
     return 0
   fi
 
-  local max_age_hours="${KLMS_RUNTIME_TMP_MAX_AGE_HOURS:-24}"
+  local max_age_hours="${KLMS_RUNTIME_TMP_MAX_AGE_HOURS:-0}"
   KLMS_RUNTIME_TMP_CLEANUP_TARGET="$TMP_ROOT_DIR" \
     /bin/zsh "$KLMS_SH_DIR/cleanup_runtime_tmp.sh" --max-age-hours "$max_age_hours" >/dev/null 2>&1 || true
 }

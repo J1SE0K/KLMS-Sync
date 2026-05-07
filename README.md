@@ -109,7 +109,7 @@ cd klms-notes-sync
 ./src/sh/cleanup_runtime_tmp.sh
 ```
 
-자동 sync entrypoint(`sync_klms_core.sh`, `sync_klms_notice.sh`, `run_all.sh`, `run_all_full.sh`)는 성공 후 `runtime/tmp`를 자동 정리한다. 기본값은 `24시간`보다 오래된 tmp를 비우는 방식이고, `KLMS_RUNTIME_TMP_CLEANUP_ENABLED=0`으로 끄거나 `KLMS_RUNTIME_TMP_MAX_AGE_HOURS`로 기준 시간을 바꿀 수 있다.
+자동 sync entrypoint(`sync_klms_core.sh`, `sync_klms_notice.sh`, `refresh_course_files.sh`, `run_all.sh`, `run_all_full.sh`)는 성공 후 `runtime/tmp`를 자동 정리한다. 기본값은 성공한 실행의 tmp를 즉시 비우는 방식이고, 실패한 실행은 디버깅을 위해 남긴다. `KLMS_RUNTIME_TMP_CLEANUP_ENABLED=0`으로 끄거나 `KLMS_RUNTIME_TMP_MAX_AGE_HOURS`로 보존 시간을 바꿀 수 있다.
 각 entrypoint는 작업별 lock을 쓴다. 기본 경로는 `~/Library/Application Support/KLMSNotesSync/runtime/automation/{core,notice,files,all}.lock` 형태다. 기본 `run_all.sh`는 `all.lock`을 잡은 뒤 `core -> notice`만 직렬 실행하고, `run_all_full.sh`는 `core -> notice -> files`까지 직렬 실행한다.
 병렬 수동 실행 경로인 `run_all_parallel.sh`도 같은 작업별 lock과 work cache를 쓴다. fetch/intermediate cache와 tmp는 `runtime/cache/{core,notice,files}` 및 `runtime/tmp/{core,notice,files}` 아래로 분리했고, 사용자 상태와 최종 산출물은 기존처럼 `runtime/cache/notice_*.json`, `runtime/cache/course_file_manifest.json`, `runtime/state/state.json` 같은 canonical 경로를 유지한다.
 
@@ -242,8 +242,8 @@ Safari 수집은 `FETCH_MIN_WAIT_SECONDS`, `FETCH_STABLE_POLLS`를 써서 DOM이
 - 게시판 글의 본문에 인라인으로 삽입된 이미지/미디어는 수집 대상에서 제외하고, 실제 첨부파일 목록에 올라온 문서/압축파일/스프레드시트 같은 파일만 manifest에 넣는다.
 - 이번 실행에서 새로 받은 파일은 먼저 `~/Downloads/KLMS Files` 아래의 같은 정리 구조로 내려받고, 과목별 폴더에는 별도 복사본을 만든다.
 - 파일 정리 스크립트는 먼저 현재 정리본, `~/Downloads/KLMS Files`, 이전 다운로드 로그가 가리키는 예전 경로를 재사용한다. 이 셋에 파일이 없을 때만 Safari를 열어 실제 다운로드를 시도한다.
-- 기본 파일 정리 실행이 끝나면 이번에 새로 받은 파일만 `~/Downloads/KLMS Files`에 남긴다.
-- `~/Downloads/KLMS Files`의 추적 파일을 전부 정리하고 `course_files` 정리본만 남기고 싶으면 `FILE_KEEP_FRESH_DOWNLOADS=0`을 설정한다.
+- 파일 정리 실행이 끝나면 `course_files`와 `~/Downloads/KLMS Files`를 같은 manifest 기준으로 prune해서 예전 경로, 중복 경로, 빈 폴더를 제거한다.
+- archive prune 결과는 `runtime/cache/course_file_archive_prune_result.json`에 남긴다.
 - `FILE_REFRESH_MODE=quick` 또는 `auto`를 쓰면 seed/nested HTML 수집도 증분 캐시를 사용한다.
 - 기본값인 `FILE_MINIMAL_EXPLORATION_ENABLED=1`에서는 `FILE_*_QUICK_LIMIT`와 background probe가 거의 `0`으로 잡혀서, 새로 발견된 URL이나 stale URL이 아니면 Safari 재탐색을 최대한 줄인다.
 - 추가로 `FILE_PRIMARY_BOARD_ALWAYS_FETCH_ONLY=1` 기본값에서는 seed 단계의 always-fetch 대상을 primary 게시판 1페이지와 `assign/resource` index 페이지로 좁힌다. nested page2/page3는 기본적으로 stale/new일 때만 다시 읽는다.

@@ -7,7 +7,7 @@ const fm = $.NSFileManager.defaultManager;
 function run(argv) {
   const options = parseArgs(argv);
   if (!options.manifestPath) {
-    throw new Error("Usage: cleanup_tracked_downloads.js --manifest=/path/to/manifest.json [--downloads-dir=/path] [--backup-dir=/path] [--dry-run] [--keep-fresh-downloads]");
+    throw new Error("Usage: cleanup_tracked_downloads.js --manifest=/path/to/manifest.json [--downloads-dir=/path] [--backup-dir=/path] [--dry-run] [--keep-fresh-downloads] [--preserve-destinations]");
   }
 
   const manifestPath = standardizePath(options.manifestPath);
@@ -57,6 +57,31 @@ function run(argv) {
         copyFile(backupPath, destinationPath);
       }
       actions.push({ filename, action: options.dryRun ? "restore-planned" : "restored" });
+      return;
+    }
+
+    if (options.preserveDestinations) {
+      const existingAuxiliaryPaths = auxiliaryPaths.filter((candidatePath) =>
+        fileExists(candidatePath)
+      );
+      if (!options.dryRun) {
+        existingAuxiliaryPaths.forEach((existingPath) => {
+          removeFileIfExists(existingPath);
+          pruneEmptyParents(directoryName(existingPath), downloadsDir);
+        });
+      }
+      actions.push({
+        filename,
+        action: fileExists(destinationPath) ? "preserved" : "already-missing",
+      });
+      auxiliaryPaths.forEach((auxiliaryPath) => {
+        actions.push({
+          filename: baseName(auxiliaryPath),
+          action: existingAuxiliaryPaths.includes(auxiliaryPath)
+            ? options.dryRun ? "delete-planned" : "deleted"
+            : "already-missing",
+        });
+      });
       return;
     }
 
@@ -124,6 +149,7 @@ function run(argv) {
       downloadsDir,
       backupDir,
       dryRun: options.dryRun,
+      preserveDestinations: options.preserveDestinations,
       fileCount: manifest.length,
       actions,
     },
@@ -133,7 +159,7 @@ function run(argv) {
 }
 
 function parseArgs(argv) {
-  const options = { dryRun: false, keepFreshDownloads: false };
+  const options = { dryRun: false, keepFreshDownloads: false, preserveDestinations: false };
   argv.forEach((arg) => {
     if (arg === "--dry-run") {
       options.dryRun = true;
@@ -141,6 +167,10 @@ function parseArgs(argv) {
     }
     if (arg === "--keep-fresh-downloads") {
       options.keepFreshDownloads = true;
+      return;
+    }
+    if (arg === "--preserve-destinations") {
+      options.preserveDestinations = true;
       return;
     }
     if (arg.startsWith("--manifest=")) {

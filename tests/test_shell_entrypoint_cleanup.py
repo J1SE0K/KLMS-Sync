@@ -1,3 +1,6 @@
+import os
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -33,6 +36,47 @@ class ShellEntrypointCleanupTests(unittest.TestCase):
         self.assertIn('".DS_Store"', text)
         self.assertIn('"__pycache__"', text)
         self.assertIn('"*.pyc"', text)
+        self.assertIn("tmp_dir.rglob(pattern)", text)
+
+    def test_cleanup_script_recursively_removes_file_tmp_lists(self) -> None:
+        script = PROJECT_DIR / "src" / "sh" / "cleanup_runtime_tmp.sh"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            nested = tmp_path / "files"
+            nested.mkdir()
+            stale_url_list = nested / "file_nested_urls_current.txt"
+            stale_url_list.write_text("https://example.invalid\n", encoding="utf-8")
+
+            env = os.environ.copy()
+            env["KLMS_RUNTIME_TMP_CLEANUP_TARGET"] = str(tmp_path)
+            result = subprocess.run(
+                ["/bin/zsh", str(script)],
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertIn("cleanup_runtime_tmp", result.stdout)
+            self.assertFalse(stale_url_list.exists())
+
+    def test_file_refresh_prunes_archive_and_cleans_tmp_on_success(self) -> None:
+        text = (PROJECT_DIR / "refresh_course_files.sh").read_text(encoding="utf-8")
+
+        self.assertIn('ARCHIVE_PRUNE_RESULT_JSON="$CACHE_DIR/course_file_archive_prune_result.json"', text)
+        self.assertIn('--root "$DOWNLOAD_ARCHIVE_ROOT"', text)
+        self.assertIn("archive-prune-summary", text)
+        self.assertIn("--preserve-destinations", text)
+        self.assertIn("klms_cleanup_runtime_tmp_if_enabled", text)
+
+    def test_cleanup_tracked_downloads_can_preserve_archive_destinations(self) -> None:
+        text = (PROJECT_DIR / "src" / "js" / "cleanup_tracked_downloads.js").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("--preserve-destinations", text)
+        self.assertIn("preserveDestinations", text)
+        self.assertIn('action: fileExists(destinationPath) ? "preserved" : "already-missing"', text)
 
 
 if __name__ == "__main__":
