@@ -3657,6 +3657,7 @@ func renderNativeNote(
 
     debugLog(
         "Detected checklist layout issues in \(noteTitle); retrying with conservative render. "
+            + "Unexpected user-added checklist lines will be deleted. "
             + firstPass.issues.prefix(6).joined(separator: " | ")
     )
 

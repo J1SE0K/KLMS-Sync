@@ -22,8 +22,13 @@ function run(argv) {
   const downloadArchiveRoot = standardizePath(
     options.downloadArchiveRoot || joinPath(downloadsDir, "KLMS Files")
   );
+  const newFilesRoot = standardizePath(options.newFilesRoot || joinPath(downloadsDir, "KLMS New Files"));
+  const quarantineRoot = standardizePath(options.quarantineRoot || joinPath(downloadsDir, "KLMS Quarantine"));
   const downloadLogPath = standardizePath(
     options.downloadLogPath || joinPath(directoryName(outputRoot), "runtime/cache/course_file_download_log.json")
+  );
+  const quarantineReportPath = standardizePath(
+    options.quarantineReportPath || joinPath(directoryName(downloadLogPath), "course_file_quarantine_report.json")
   );
   const manifestStatePath = standardizePath(
     options.manifestStatePath || joinPath(directoryName(manifestPath), "course_file_manifest_state.json")
@@ -45,6 +50,7 @@ function run(argv) {
 
   let topLevelStep = "ensure-output-root";
   const results = [];
+  const quarantineRecords = [];
   const claimedAuxiliaryPaths = new Set();
   const claimedRelativePaths = new Set();
 
@@ -52,7 +58,11 @@ function run(argv) {
     ensureDir(outputRoot);
     ensureDir(backupRoot);
     ensureDir(downloadArchiveRoot);
+    ensureDir(newFilesRoot);
+    ensureDir(quarantineRoot);
     ensureDir(directoryName(downloadLogPath));
+    ensureDir(directoryName(quarantineReportPath));
+    writeQuarantineReport(quarantineReportPath, manifestPath, outputRoot, quarantineRoot, quarantineRecords);
     topLevelStep = "download-loop";
     for (let index = 0; index < manifest.length; index += 1) {
       const entry = manifest[index];
@@ -507,8 +517,26 @@ function run(argv) {
           throw new Error(`Could not determine downloaded filename: ${downloadedPath}`);
         }
         if (!filenameCompatibleWithExpected(activeFilename, manifestFilename)) {
+          const quarantineRecord = quarantineDownloadedFile(
+            downloadedPath,
+            quarantineRoot,
+            relativeDir,
+            activeFilename,
+            manifestFilename,
+            entry,
+            index + 1,
+            "filename-type-mismatch"
+          );
+          quarantineRecords.push(quarantineRecord);
+          writeQuarantineReport(
+            quarantineReportPath,
+            manifestPath,
+            outputRoot,
+            quarantineRoot,
+            quarantineRecords
+          );
           throw new Error(
-            `Downloaded filename does not match expected file type: ${activeFilename} expected ${manifestFilename}`
+            `Downloaded filename does not match expected file type: ${activeFilename} expected ${manifestFilename}; quarantined=${quarantineRecord.quarantine_path}; report=${quarantineReportPath}`
           );
         }
         if (isIgnoredDownloadName(activeFilename)) {
@@ -537,8 +565,10 @@ function run(argv) {
         copyFile(downloadedPath, destinationPath);
         step = "preserve-download";
         preservedDownloadPath = preserveDownloadedCopy(downloadedPath, trackedArchivePath);
+        step = "copy-new-file-inbox";
+        const newFilesPath = copyFreshDownloadToInbox(destinationPath, newFilesRoot, relativePath);
         step = "apply-klms-timestamp";
-        applyKlmsTimestampToPaths([destinationPath, preservedDownloadPath], entry);
+        applyKlmsTimestampToPaths([destinationPath, preservedDownloadPath, newFilesPath], entry);
         updateManifestEntryWithFilename(entry, activeFilename, relativePath, destinationPath);
         const localDownloadMetadata = currentLocalDownloadMetadata("fresh-download");
         applyLocalDownloadMetadata(entry, localDownloadMetadata);
@@ -555,6 +585,10 @@ function run(argv) {
           downloads_relative_path: relativePath,
           downloads_filename: baseName(preservedDownloadPath),
           downloads_path: preservedDownloadPath,
+          new_files_root: newFilesRoot,
+          new_files_relative_path: relativePath,
+          new_files_path: newFilesPath,
+          copied_to_new_files_inbox: Boolean(newFilesPath),
           bytes: fileSize(destinationPath),
           source_url: entry.source_url || "",
           url: entry.url || "",
@@ -628,7 +662,13 @@ function run(argv) {
     results
   );
 
-	  const payload = buildDownloadPayload(manifestPath, outputRoot, downloadLogPath, results);
+	  const payload = buildDownloadPayload(manifestPath, outputRoot, downloadLogPath, results, {
+	    newFilesRoot,
+	    newFilesCopiedCount: results.filter((result) => result.copied_to_new_files_inbox).length,
+	    quarantineRoot,
+	    quarantineReportPath,
+	    quarantineCount: quarantineRecords.length,
+	  });
 	  if (options.resultJsonPath) {
 	    const resultJsonPath = standardizePath(options.resultJsonPath);
 	    ensureDir(directoryName(resultJsonPath));
@@ -696,6 +736,18 @@ function parseArgs(argv) {
       options.downloadArchiveRoot = arg.slice("--download-archive-root=".length);
       return;
     }
+    if (arg.startsWith("--new-files-root=")) {
+      options.newFilesRoot = arg.slice("--new-files-root=".length);
+      return;
+    }
+    if (arg.startsWith("--quarantine-root=")) {
+      options.quarantineRoot = arg.slice("--quarantine-root=".length);
+      return;
+    }
+    if (arg.startsWith("--quarantine-report=")) {
+      options.quarantineReportPath = arg.slice("--quarantine-report=".length);
+      return;
+    }
     if (arg.startsWith("--force-download=")) {
       options.forceDownload = arg.slice("--force-download=".length);
       return;
@@ -705,13 +757,14 @@ function parseArgs(argv) {
   return options;
 }
 
-function buildDownloadPayload(manifestPath, outputRoot, downloadLogPath, results) {
+function buildDownloadPayload(manifestPath, outputRoot, downloadLogPath, results, extra) {
   return {
     manifestPath,
     outputRoot,
     downloadLogPath,
     fileCount: results.length,
     results,
+    ...(extra || {}),
   };
 }
 
@@ -2088,6 +2141,87 @@ function preserveDownloadedCopy(downloadedPath, trackedPath) {
   removeDirectoryArtifactIfExists(trackedPath);
   moveFile(downloadedPath, trackedPath);
   return trackedPath;
+}
+
+function copyFreshDownloadToInbox(sourcePath, newFilesRoot, relativePath) {
+  const safeRelativePath = validateSafeRelativePath(relativePath);
+  const inboxPath = joinPath(newFilesRoot, safeRelativePath);
+  ensureDir(directoryName(inboxPath));
+  copyFile(sourcePath, inboxPath);
+  return inboxPath;
+}
+
+function quarantineDownloadedFile(
+  downloadedPath,
+  quarantineRoot,
+  relativeDir,
+  activeFilename,
+  expectedFilename,
+  entry,
+  index,
+  reason
+) {
+  const safeFilename = sanitizeDownloadFilename(activeFilename || baseName(downloadedPath) || "downloaded-file");
+  const quarantineRelativePath = validateSafeRelativePath(
+    relativeDir ? joinPath(relativeDir, safeFilename) : safeFilename
+  );
+  const preferredPath = joinPath(quarantineRoot, quarantineRelativePath);
+  const quarantinePath = uniqueFilePath(preferredPath);
+  ensureDir(directoryName(quarantinePath));
+  copyFile(downloadedPath, quarantinePath);
+  return {
+    index,
+    reason,
+    course: String(entry.course || ""),
+    url: String(entry.url || ""),
+    source_url: String(entry.source_url || ""),
+    manifest_filename: String(expectedFilename || ""),
+    downloaded_filename: String(activeFilename || ""),
+    manifest_relative_path: String(entry.relative_path || ""),
+    quarantine_path: quarantinePath,
+    quarantine_relative_path: quarantineRelativePath,
+    bytes: fileSize(quarantinePath),
+  };
+}
+
+function writeQuarantineReport(path, manifestPath, outputRoot, quarantineRoot, records) {
+  writeJson(path, {
+    manifestPath,
+    outputRoot,
+    quarantineRoot,
+    quarantineCount: records.length,
+    records,
+  });
+}
+
+function validateSafeRelativePath(relativePath) {
+  const value = String(relativePath || "").trim();
+  if (
+    !value ||
+    value.startsWith("/") ||
+    value.includes("\\") ||
+    value.split("/").includes("..")
+  ) {
+    throw new Error(`Refusing unsafe relative path: ${value}`);
+  }
+  return value;
+}
+
+function uniqueFilePath(preferredPath) {
+  if (!fileExists(preferredPath)) {
+    return preferredPath;
+  }
+  const dir = directoryName(preferredPath);
+  const name = baseName(preferredPath);
+  const split = splitFileName(name);
+  const stamp = new Date().toISOString().replace(/[^0-9T]/g, "").slice(0, 15);
+  for (let counter = 2; counter < 10000; counter += 1) {
+    const candidate = joinPath(dir, `${split.stem} ${stamp} (${counter})${split.ext}`);
+    if (!fileExists(candidate)) {
+      return candidate;
+    }
+  }
+  throw new Error(`Could not allocate unique quarantine path for ${preferredPath}`);
 }
 
 function buildLegacyDownloadAuxiliaryPaths(downloadsDir, trackedArchivePath, filename, expectedBytes) {

@@ -19,6 +19,10 @@ class DownloadFilenameSafetyTests(unittest.TestCase):
         self.assertIn("fetchedPayloadCompatibleWithExpected", text)
         self.assertIn("text/html", text)
         self.assertIn("Downloaded filename does not match expected file type", text)
+        self.assertIn("quarantineDownloadedFile", text)
+        self.assertIn("course_file_quarantine_report.json", text)
+        self.assertIn("copyFreshDownloadToInbox", text)
+        self.assertIn("KLMS New Files", text)
         self.assertIn("result.course", text)
         self.assertIn("result.source_url", text)
 

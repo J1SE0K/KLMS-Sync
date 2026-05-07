@@ -58,6 +58,8 @@ DOWNLOAD_LOG_JSON="$CACHE_DIR/course_file_download_log.json"
 DOWNLOAD_RESULT_JSON="$CACHE_DIR/course_file_download_result.json"
 PRUNE_RESULT_JSON="$CACHE_DIR/course_file_prune_result.json"
 CLEANUP_RESULT_JSON="$CACHE_DIR/course_file_cleanup_result.json"
+SYNC_PREVIEW_JSON="$CACHE_DIR/course_file_sync_preview.json"
+QUARANTINE_REPORT_JSON="$CACHE_DIR/course_file_quarantine_report.json"
 FILE_SEED_FETCH_SUMMARY_JSON="$WORK_CACHE_DIR/file_seed_fetch_summary.json"
 FILE_NESTED_FETCH_SUMMARY_JSON="$WORK_CACHE_DIR/file_nested_fetch_summary.json"
 FILE_NESTED2_FETCH_SUMMARY_JSON="$WORK_CACHE_DIR/file_nested_round2_fetch_summary.json"
@@ -789,6 +791,33 @@ if tracked == 0 and actual_files > 0:
     )
 PY
 
+log_files_timing "file preview start"
+preview_started_epoch="$(date +%s)"
+python3 "$KLMS_PYTHON_DIR/build_course_file_sync_preview.py" \
+  --manifest-json "$MANIFEST_JSON" \
+  --output-root "$OUTPUT_ROOT" \
+  --download-log-json "$DOWNLOAD_LOG_JSON" \
+  --download-archive-root "$HOME/Downloads/KLMS Files" \
+  --output-json "$SYNC_PREVIEW_JSON"
+log_files_timing "file preview finish duration_s=$(($(date +%s) - preview_started_epoch))"
+
+python3 - "$QUARANTINE_REPORT_JSON" "$MANIFEST_JSON" "$OUTPUT_ROOT" "$HOME/Downloads/KLMS Quarantine" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+report_path = Path(sys.argv[1])
+payload = {
+    "manifestPath": str(Path(sys.argv[2]).resolve()),
+    "outputRoot": str(Path(sys.argv[3]).resolve()),
+    "quarantineRoot": str(Path(sys.argv[4]).expanduser().resolve()),
+    "quarantineCount": 0,
+    "records": [],
+}
+report_path.parent.mkdir(parents=True, exist_ok=True)
+report_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+PY
+
 log_files_timing "download start force_download=$FILE_FORCE_DOWNLOAD"
 download_started_epoch="$(date +%s)"
 if ! is_truthy "$FILE_FORCE_DOWNLOAD" \
@@ -870,13 +899,17 @@ skipped_existing = sum(1 for item in results if item.get("skipped_existing"))
 restored_from_archive = sum(1 for item in results if item.get("restored_from_archive"))
 reused_logged_file = sum(1 for item in results if item.get("reused_logged_file"))
 downloaded_fresh = max(0, len(results) - skipped_existing - restored_from_archive - reused_logged_file)
+new_files_copied = sum(1 for item in results if item.get("copied_to_new_files_inbox"))
+quarantine_count = int(download.get("quarantineCount", 0) or 0)
 print(
     "download-summary "
     f"total={len(results)} "
     f"skipped_existing={skipped_existing} "
     f"restored_from_archive={restored_from_archive} "
     f"reused_logged_file={reused_logged_file} "
-    f"downloaded_fresh={downloaded_fresh}"
+    f"downloaded_fresh={downloaded_fresh} "
+    f"new_files_copied={new_files_copied} "
+    f"quarantine={quarantine_count}"
 )
 
 prune = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
