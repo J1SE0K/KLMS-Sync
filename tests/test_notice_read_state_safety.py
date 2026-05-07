@@ -42,14 +42,49 @@ class NoticeReadStateSafetyTests(unittest.TestCase):
         self.assertIn("displayMode == .archive && readChecked", text)
         self.assertIn("plaintextHash(for: currentText) != expectedPlaintextHash", text)
 
-    def test_large_notice_render_uses_rich_paste_without_ui_style_pass(self) -> None:
+    def test_large_notice_render_uses_rich_paste_and_format_menu_styles(self) -> None:
         text = (
             PROJECT_DIR / "src" / "swift" / "update_notice_native_note.swift"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("rich_paste", text)
         self.assertIn("html: html, attributedText: attributed", text)
+        self.assertIn("font-size:\\(cssFontSize(line.fontSize))pt", text)
+        self.assertIn("NSFont.boldSystemFont(ofSize: line.fontSize)", text)
+        self.assertIn('NOTICE_NATIVE_DISABLE_UI_STYLE_FORMAT', text)
+        self.assertNotIn('NOTICE_NATIVE_ENABLE_UI_STYLE_FALLBACK"] == "1"', text)
+        self.assertIn('menuItems: ["제목", "Title"]', text)
+        self.assertIn('menuItems: ["머리말", "Heading"]', text)
+        self.assertIn('menuItems: ["부머리말", "Subheading"]', text)
         self.assertIn("readability_validation_targets_finish", text)
+
+    def test_notice_render_assigns_readability_font_hierarchy(self) -> None:
+        support = (
+            PROJECT_DIR / "src" / "swift" / "notice_native_note_support.swift"
+        ).read_text(encoding="utf-8")
+        renderer = (
+            PROJECT_DIR / "src" / "swift" / "update_notice_native_note.swift"
+        ).read_text(encoding="utf-8")
+
+        for token in [
+            "noticeDocumentTitleFontSize",
+            "noticeSectionHeadingFontSize",
+            "noticeCourseHeadingFontSize",
+            "noticeItemTitleFontSize",
+            "noticeMetaFontSize",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, support)
+                self.assertIn(token, renderer)
+
+        self.assertIn(
+            "appendLine(noteTitle, bold: true, fontSize: noticeDocumentTitleFontSize)",
+            renderer,
+        )
+        self.assertIn(
+            "appendLine(finalTitle, bold: true, fontSize: noticeItemTitleFontSize)",
+            renderer,
+        )
+        self.assertIn("cssFontSize(line.fontSize)", renderer)
 
     def test_swift_process_capture_does_not_pipe_large_outputs(self) -> None:
         text = (
@@ -76,7 +111,12 @@ class NoticeReadStateSafetyTests(unittest.TestCase):
         self.assertLess(verify_index, stable_noop_index)
         self.assertIn("readability-format-check-failed", text)
         self.assertIn("Native notice note readability format missing", text)
-        self.assertIn("noteReadableBoldTagCountViaAppleScript", text)
+        self.assertIn("noteReadableStyleMetricsViaAppleScript", text)
+        self.assertIn("font_size_tags", text)
+        self.assertIn("heading_tags", text)
+        self.assertIn("large_font_tags", text)
+        self.assertIn("minimumLargeFontTags", text)
+        self.assertIn('targetKey === "primary" ? 20 : 1', text)
         self.assertNotIn("return body of note", text)
 
 

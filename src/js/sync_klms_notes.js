@@ -1658,7 +1658,35 @@ function appleScriptStringLiteral(value) {
     .replace(/"/g, '\\"')}"`;
 }
 
-function noteReadableBoldTagCountViaAppleScript(noteName, scriptDir) {
+function parseNoticeReadableStyleMetrics(output) {
+  const metrics = {
+    boldTags: 0,
+    fontSizeTags: 0,
+    headingTags: 0,
+    largeFontTags: 0,
+  };
+  String(output || "")
+    .split(/\r?\n/)
+    .forEach((line) => {
+      const match = line.match(/^([a-z_]+)=(\d+)$/);
+      if (!match) {
+        return;
+      }
+      const value = Number(match[2] || "0");
+      if (match[1] === "bold_tags") {
+        metrics.boldTags = value;
+      } else if (match[1] === "font_size_tags") {
+        metrics.fontSizeTags = value;
+      } else if (match[1] === "heading_tags") {
+        metrics.headingTags = value;
+      } else if (match[1] === "large_font_tags") {
+        metrics.largeFontTags = value;
+      }
+    });
+  return metrics;
+}
+
+function noteReadableStyleMetricsViaAppleScript(noteName, scriptDir) {
   const script = [
     "on countOccurrences(sourceText, needle)",
     "  set previousDelimiters to AppleScript's text item delimiters",
@@ -1684,22 +1712,49 @@ function noteReadableBoldTagCountViaAppleScript(noteName, scriptDir) {
     "set boldCount to boldCount + countOccurrences(htmlText, \"<h4\")",
     "set boldCount to boldCount + countOccurrences(htmlText, \"<h5\")",
     "set boldCount to boldCount + countOccurrences(htmlText, \"<h6\")",
-    "return boldCount as text",
+    "set headingCount to countOccurrences(htmlText, \"<h1\")",
+    "set headingCount to headingCount + countOccurrences(htmlText, \"<h2\")",
+    "set headingCount to headingCount + countOccurrences(htmlText, \"<h3\")",
+    "set headingCount to headingCount + countOccurrences(htmlText, \"<h4\")",
+    "set headingCount to headingCount + countOccurrences(htmlText, \"<h5\")",
+    "set headingCount to headingCount + countOccurrences(htmlText, \"<h6\")",
+    "set fontSizeCount to countOccurrences(htmlText, \"font-size\")",
+    "set largeFontCount to 0",
+    "set largeFontCount to largeFontCount + countOccurrences(htmlText, \"font-size:22\")",
+    "set largeFontCount to largeFontCount + countOccurrences(htmlText, \"font-size: 22\")",
+    "set largeFontCount to largeFontCount + countOccurrences(htmlText, \"font-size:18\")",
+    "set largeFontCount to largeFontCount + countOccurrences(htmlText, \"font-size: 18\")",
+    "set largeFontCount to largeFontCount + countOccurrences(htmlText, \"font-size:16\")",
+    "set largeFontCount to largeFontCount + countOccurrences(htmlText, \"font-size: 16\")",
+    "set largeFontCount to largeFontCount + countOccurrences(htmlText, \"font-size:15\")",
+    "set largeFontCount to largeFontCount + countOccurrences(htmlText, \"font-size: 15\")",
+    "set largeFontCount to largeFontCount + headingCount",
+    "return \"bold_tags=\" & (boldCount as text) & linefeed & \"font_size_tags=\" & (fontSizeCount as text) & linefeed & \"heading_tags=\" & (headingCount as text) & linefeed & \"large_font_tags=\" & (largeFontCount as text)",
   ].join("\n");
   const output = runCommand(["/usr/bin/osascript", "-e", script], scriptDir);
-  return Number(String(output || "").trim() || "0");
+  return parseNoticeReadableStyleMetrics(output);
 }
 
 function verifyNoticeNativeNoteReadableFormat(noteName, targetKey, scriptDir) {
-  const boldTagCount = noteReadableBoldTagCountViaAppleScript(noteName, scriptDir);
+  const metrics = noteReadableStyleMetricsViaAppleScript(noteName, scriptDir);
   const minimumBoldTags = targetKey === "primary" ? 20 : 2;
-  if (boldTagCount < minimumBoldTags) {
+  const minimumLargeFontTags = targetKey === "primary" ? 20 : 1;
+  if (
+    metrics.boldTags < minimumBoldTags ||
+    metrics.largeFontTags < minimumLargeFontTags
+  ) {
     throw new Error(
       `Native notice note readability format missing (${targetKey}): ` +
-        `bold_tags=${boldTagCount} minimum=${minimumBoldTags}`
+        `bold_tags=${metrics.boldTags} minimum=${minimumBoldTags} ` +
+        `font_size_tags=${metrics.fontSizeTags} heading_tags=${metrics.headingTags} ` +
+        `large_font_tags=${metrics.largeFontTags} minimum=${minimumLargeFontTags}`
     );
   }
-  return `Verified native notice readability format: ${targetKey} bold_tags=${boldTagCount}`;
+  return (
+    `Verified native notice readability format: ${targetKey} ` +
+    `bold_tags=${metrics.boldTags} font_size_tags=${metrics.fontSizeTags} ` +
+    `heading_tags=${metrics.headingTags} large_font_tags=${metrics.largeFontTags}`
+  );
 }
 
 function maybeSkipStableNoticeNativeUpdate(

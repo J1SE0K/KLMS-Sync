@@ -838,6 +838,19 @@ func htmlEscaped(_ text: String) -> String {
         .replacingOccurrences(of: "\"", with: "&quot;")
 }
 
+func cssFontSize(_ fontSize: CGFloat) -> String {
+    let value = Double(fontSize)
+    if value.rounded() == value {
+        return String(Int(value))
+    }
+    return String(format: "%.1f", value)
+}
+
+func htmlStyle(for line: RenderLine) -> String {
+    let fontWeight = line.isBold ? "700" : "400"
+    return "font-size:\(cssFontSize(line.fontSize))pt;font-weight:\(fontWeight);line-height:1.35;"
+}
+
 func paste(_ app: AXUIElement, text: String, html: String? = nil, attributedText: NSAttributedString? = nil) {
     let pasteboard = NSPasteboard.general
     pasteboard.clearContents()
@@ -3154,8 +3167,20 @@ func buildRenderPlan(
     let visibleImportantCount = importantCourses.reduce(0) { $0 + $1.notices.count }
     let archivedCount = mode == .archive ? visibleUnreadCount : 0
 
-    func appendLine(_ text: String, checklist: Bool = false, bold: Bool = false) {
-        bodyLines.append(RenderLine(text: text, isChecklist: checklist, isBold: bold))
+    func appendLine(
+        _ text: String,
+        checklist: Bool = false,
+        bold: Bool = false,
+        fontSize: CGFloat = noticeBodyFontSize
+    ) {
+        bodyLines.append(
+            RenderLine(
+                text: text,
+                isChecklist: checklist,
+                isBold: bold,
+                fontSize: fontSize
+            )
+        )
     }
 
     func appendSectionDivider() {
@@ -3163,14 +3188,14 @@ func buildRenderPlan(
         appendLine("--------------")
     }
 
-    appendLine(noteTitle, bold: true)
+    appendLine(noteTitle, bold: true, fontSize: noticeDocumentTitleFontSize)
     if mode == .primary {
         let summaryLine =
             "기준 시각: \(digest.generatedAt) · 중요 \(visibleImportantCount)건 · 새로운 \(visibleFreshCount)건 · 읽지 않음 \(visibleUnreadCount)건 · 새 \(digest.newCount)건 · 수정 \(digest.updatedCount)건 · 전체 \(digest.noticeCount)건"
-        appendLine(summaryLine, bold: true)
+        appendLine(summaryLine, bold: true, fontSize: noticeSummaryFontSize)
     } else {
         let summaryLine = "기준 시각: \(digest.generatedAt) · 확인 \(archivedCount)건"
-        appendLine(summaryLine, bold: true)
+        appendLine(summaryLine, bold: true, fontSize: noticeSummaryFontSize)
     }
     appendLine("")
 
@@ -3178,7 +3203,7 @@ func buildRenderPlan(
         let normalizedTitle = oneLine(notice.displayTitle.isEmpty ? notice.title : notice.displayTitle)
         let finalTitle = normalizedTitle.isEmpty ? "(제목 없음)" : normalizedTitle
         let sectionLineIndex = bodyLines.count
-        appendLine(finalTitle, bold: true)
+        appendLine(finalTitle, bold: true, fontSize: noticeItemTitleFontSize)
 
         let readLineIndex = bodyLines.count
         appendLine(readChecklistLabel, checklist: true)
@@ -3205,14 +3230,14 @@ func buildRenderPlan(
         if !metaParts.isEmpty {
             let metaLineIndex = bodyLines.count
             let metaLine = metaParts.joined(separator: " · ")
-            appendLine(metaLine, bold: true)
+            appendLine(metaLine, bold: true, fontSize: noticeMetaFontSize)
             noticeMetaLineIndexes.append(metaLineIndex)
         }
 
         if !notice.attachmentItems.isEmpty {
             appendLine("")
             attachmentHeadingLineIndexes.append(bodyLines.count)
-            appendLine("첨부 파일", bold: true)
+            appendLine("첨부 파일", bold: true, fontSize: noticeMetaFontSize)
             for attachment in notice.attachmentItems {
                 let attachmentName = "- \(attachmentDisplayName(attachment))"
                 appendLine(attachmentName)
@@ -3224,7 +3249,7 @@ func buildRenderPlan(
         } else if !notice.attachments.isEmpty {
             appendLine("")
             attachmentHeadingLineIndexes.append(bodyLines.count)
-            appendLine("첨부 파일", bold: true)
+            appendLine("첨부 파일", bold: true, fontSize: noticeMetaFontSize)
             for attachmentName in fallbackAttachmentNames(notice.attachments) {
                 let attachmentLine = "- \(attachmentName)"
                 appendLine(attachmentLine)
@@ -3274,12 +3299,12 @@ func buildRenderPlan(
     if mode == .primary {
         importantHeadingLineIndexes.append(bodyLines.count)
         let importantHeading = "중요 공지 (\(visibleImportantCount)건)"
-        appendLine(importantHeading, bold: true)
+        appendLine(importantHeading, bold: true, fontSize: noticeSectionHeadingFontSize)
         appendLine("")
         for course in importantCourses {
             courseHeadingLineIndexes.append(bodyLines.count)
             let heading = "\(course.title) (\(course.notices.count)건)"
-            appendLine(heading, bold: true)
+            appendLine(heading, bold: true, fontSize: noticeCourseHeadingFontSize)
             appendLine("")
             for notice in course.notices {
                 appendNotice(notice)
@@ -3293,12 +3318,12 @@ func buildRenderPlan(
         appendLine("")
         freshHeadingLineIndexes.append(bodyLines.count)
         let freshHeading = "새로운 공지 (\(visibleFreshCount)건)"
-        appendLine(freshHeading, bold: true)
+        appendLine(freshHeading, bold: true, fontSize: noticeSectionHeadingFontSize)
         appendLine("")
         for course in freshCourses {
             courseHeadingLineIndexes.append(bodyLines.count)
             let heading = "\(course.title) (\(course.notices.count)건)"
-            appendLine(heading, bold: true)
+            appendLine(heading, bold: true, fontSize: noticeCourseHeadingFontSize)
             appendLine("")
             for notice in course.notices {
                 appendNotice(notice)
@@ -3311,14 +3336,14 @@ func buildRenderPlan(
         appendLine("")
         unreadHeadingLineIndexes.append(bodyLines.count)
         let unreadHeading = "읽지 않은 공지 (\(visibleUnreadCount)건)"
-        appendLine(unreadHeading, bold: true)
+        appendLine(unreadHeading, bold: true, fontSize: noticeSectionHeadingFontSize)
         appendLine("")
     }
 
     for (courseIndex, course) in unreadCourses.enumerated() {
         courseHeadingLineIndexes.append(bodyLines.count)
         let heading = "\(course.title) (\(course.notices.count)건)"
-        appendLine(heading, bold: true)
+        appendLine(heading, bold: true, fontSize: noticeCourseHeadingFontSize)
         appendLine("")
         for notice in course.notices {
             appendNotice(notice)
@@ -3417,25 +3442,27 @@ func renderBodyLines(
     let html = """
 <html><body>
 \(lines.map { line in
+    let style = htmlStyle(for: line)
     if line.text.isEmpty {
-        return "<div><br></div>"
+        return "<div style=\"\(style)\"><span style=\"\(style)\"><br></span></div>"
     }
     let escapedText = htmlEscaped(line.text)
     let content = line.isBold ? "<b>\(escapedText)</b>" : escapedText
-    return "<div>\(content)<br></div>"
+    return "<div style=\"\(style)\"><span style=\"\(style)\">\(content)</span><br></div>"
 }.joined(separator: "\n"))
 </body></html>
 """
     let attributed = NSMutableAttributedString()
-    let regularFont = NSFont.systemFont(ofSize: NSFont.systemFontSize)
-    let boldFont = NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)
     for (offset, line) in lines.enumerated() {
+        let font = line.isBold
+            ? NSFont.boldSystemFont(ofSize: line.fontSize)
+            : NSFont.systemFont(ofSize: line.fontSize)
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: line.isBold ? boldFont : regularFont
+            .font: font
         ]
         attributed.append(NSAttributedString(string: line.text, attributes: attributes))
         if offset < lines.count - 1 {
-            attributed.append(NSAttributedString(string: "\n", attributes: [.font: regularFont]))
+            attributed.append(NSAttributedString(string: "\n", attributes: [.font: font]))
         }
     }
     paste(context.app, text: plaintext, html: html, attributedText: attributed)
@@ -3663,7 +3690,7 @@ func renderNativeNoteOnce(
         timingLog("readability_validation_targets_finish note=\(noteTitle) bold_targets=\(boldValidationTargets.count)")
     }
 
-    if ProcessInfo.processInfo.environment["NOTICE_NATIVE_ENABLE_UI_STYLE_FALLBACK"] == "1" {
+    if ProcessInfo.processInfo.environment["NOTICE_NATIVE_DISABLE_UI_STYLE_FORMAT"] != "1" {
         timingLog("style_apply_start note=\(noteTitle)")
         applyStyle(
             lineRange(plan.titleLineIndex, fallback: plan.titleRange),
@@ -3714,7 +3741,7 @@ func renderNativeNoteOnce(
         timingLog("style_apply_finish note=\(noteTitle) bold_targets=\(boldValidationTargets.count)")
     } else {
         timingLog(
-            "style_apply_skip note=\(noteTitle) reason=rich_paste notices=\(plan.renderedNotices.count) "
+            "style_apply_skip note=\(noteTitle) reason=disabled_by_env notices=\(plan.renderedNotices.count) "
                 + "lines=\(plan.bodyLines.count)"
         )
     }
@@ -3903,7 +3930,10 @@ func renderContentHash(for plan: RenderPlan) -> String {
     var components: [String] = [nativeNoticeRenderStyleVersion]
     components.reserveCapacity(plan.bodyLines.count + plan.renderedNotices.count + 2)
     for line in plan.bodyLines {
-        components.append("\(line.isChecklist ? "1" : "0")|\(line.isBold ? "1" : "0")|\(line.text)")
+        components.append(
+            "\(line.isChecklist ? "1" : "0")|\(line.isBold ? "1" : "0")|"
+                + "\(cssFontSize(line.fontSize))|\(line.text)"
+        )
     }
     components.append("::")
     for notice in plan.renderedNotices {

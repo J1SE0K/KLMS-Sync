@@ -180,6 +180,7 @@ struct RenderLine {
     let text: String
     let isChecklist: Bool
     let isBold: Bool
+    let fontSize: CGFloat
 }
 
 struct RenderChunk {
@@ -278,7 +279,7 @@ struct ResolvedRenderedNotice {
 let defaultNoteTitle = "KLMS 공지"
 let defaultArchiveNoteTitle = "KLMS 확인한 공지"
 let nativeNoticeRenderStateVersion = 2
-let nativeNoticeRenderStyleVersion = "2026-05-08-readability-format-verify"
+let nativeNoticeRenderStyleVersion = "2026-05-08-format-menu-font-size-verify"
 let readChecklistLabel = "읽음"
 let importantChecklistLabel = "중요"
 let checklistMenuTitles = ["체크리스트", "Checklist"]
@@ -291,6 +292,13 @@ let pasteSettleUsec: useconds_t = 70_000
 let initialEditorClearDelay: TimeInterval = 0.12
 let initialEditorFocusDelay: TimeInterval = 0.04
 let finalChecklistDisableDelay: TimeInterval = 0.12
+let noticeBodyFontSize: CGFloat = 13
+let noticeMetaFontSize: CGFloat = 12
+let noticeSummaryFontSize: CGFloat = 13
+let noticeItemTitleFontSize: CGFloat = 15
+let noticeCourseHeadingFontSize: CGFloat = 16
+let noticeSectionHeadingFontSize: CGFloat = 18
+let noticeDocumentTitleFontSize: CGFloat = 22
 
 func fail(_ message: String) -> Never {
     fputs("\(message)\n", stderr)
