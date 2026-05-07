@@ -3324,14 +3324,26 @@ func buildRenderPlan(
         appendLine("--------------")
     }
 
+    func appendNoticeGuidanceBlock(includeFreshGuidance: Bool) {
+        appendLine("")
+        appendLine("체크 안내", bold: true, fontSize: noticeMetaFontSize)
+        appendLine(noticeReadGuidanceLine, fontSize: noticeMetaFontSize)
+        appendLine(noticeImportantGuidanceLine, fontSize: noticeMetaFontSize)
+        if includeFreshGuidance {
+            appendLine(noticeFreshGuidanceLine, fontSize: noticeMetaFontSize)
+        }
+    }
+
     appendLine(noteTitle, bold: true, fontSize: noticeDocumentTitleFontSize)
     if mode == .primary {
         let summaryLine =
             "기준 시각: \(digest.generatedAt) · 중요 \(visibleImportantCount)건 · 새로운 \(visibleFreshCount)건 · 읽지 않음 \(visibleUnreadCount)건 · 새 \(digest.newCount)건 · 수정 \(digest.updatedCount)건 · 전체 \(digest.noticeCount)건"
         appendLine(summaryLine, bold: true, fontSize: noticeSummaryFontSize)
+        appendNoticeGuidanceBlock(includeFreshGuidance: true)
     } else {
         let summaryLine = "기준 시각: \(digest.generatedAt) · 확인 \(archivedCount)건"
         appendLine(summaryLine, bold: true, fontSize: noticeSummaryFontSize)
+        appendNoticeGuidanceBlock(includeFreshGuidance: false)
     }
     appendLine("")
 
@@ -3491,14 +3503,14 @@ func buildRenderPlan(
         )
 
         if !didAppendPrimarySection {
-            appendLine("표시할 공지가 없습니다.")
+            appendLine(noticePrimaryEmptyGuidanceLine)
         }
     } else {
         appendCourseGroup(unreadCourses)
     }
 
     if mode == .archive && unreadCourses.isEmpty {
-        appendLine("\"읽음\"만 체크한 공지는 다음 동기화 때 여기에 모입니다.")
+        appendLine(noticeArchiveEmptyGuidanceLine)
     }
 
     let lines = bodyLines.map(\.text)

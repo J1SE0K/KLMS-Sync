@@ -84,9 +84,22 @@ class NoticeReadStateSafetyTests(unittest.TestCase):
         renderer = (
             PROJECT_DIR / "src" / "swift" / "update_notice_native_note.swift"
         ).read_text(encoding="utf-8")
+        support = (
+            PROJECT_DIR / "src" / "swift" / "notice_native_note_support.swift"
+        ).read_text(encoding="utf-8")
 
         self.assertNotIn("확인한 공지가 없어.", renderer)
-        self.assertIn('\\"읽음\\"만 체크한 공지는 다음 동기화 때 여기에 모입니다.', renderer)
+        self.assertNotIn("표시할 공지가 없습니다.", renderer)
+        self.assertIn("noticeArchiveEmptyGuidanceLine", renderer)
+        self.assertIn(
+            '\\"읽음\\"만 체크한 공지는 다음 동기화 때 KLMS 확인한 공지에 표시됩니다.',
+            support,
+        )
+        self.assertIn(
+            '\\"중요\\"를 체크한 공지는 다음 동기화 때 KLMS 공지 상단의 중요 공지에 표시됩니다.',
+            support,
+        )
+        self.assertIn("새 글/수정 글은 새로운 공지에", support)
 
     def test_notice_render_assigns_readability_font_hierarchy(self) -> None:
         support = (
@@ -126,11 +139,24 @@ class NoticeReadStateSafetyTests(unittest.TestCase):
 
         self.assertIn("func appendPrimarySection", renderer)
         self.assertIn("guard count > 0 else", renderer)
-        self.assertIn("표시할 공지가 없습니다.", renderer)
+        self.assertIn("noticePrimaryEmptyGuidanceLine", renderer)
         self.assertIn("(?im)^\\s*-{20,}\\s*$", renderer)
         self.assertIn("Original\\s+due|New\\s+due|Original|New|Due", renderer)
         self.assertIn("(?=#{1,6}\\s+)", renderer)
         self.assertIn('"  위치: \\(displayPath)"', renderer)
+
+    def test_notice_header_includes_check_guidance(self) -> None:
+        renderer = (
+            PROJECT_DIR / "src" / "swift" / "update_notice_native_note.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("func appendNoticeGuidanceBlock", renderer)
+        self.assertIn('appendLine("체크 안내"', renderer)
+        self.assertIn("appendLine(noticeReadGuidanceLine", renderer)
+        self.assertIn("appendLine(noticeImportantGuidanceLine", renderer)
+        self.assertIn("appendLine(noticeFreshGuidanceLine", renderer)
+        self.assertIn("appendNoticeGuidanceBlock(includeFreshGuidance: true)", renderer)
+        self.assertIn("appendNoticeGuidanceBlock(includeFreshGuidance: false)", renderer)
 
     def test_notice_style_version_is_shared_between_swift_and_js(self) -> None:
         support = (
