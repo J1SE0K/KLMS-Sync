@@ -85,7 +85,7 @@ class NoticeReadStateSafetyTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertNotIn("확인한 공지가 없어.", renderer)
-        self.assertIn("읽음만 체크한 공지는 다음 동기화 때 여기에 모여.", renderer)
+        self.assertIn("읽음만 체크한 공지는 다음 동기화 때 여기에 모입니다.", renderer)
 
     def test_notice_render_assigns_readability_font_hierarchy(self) -> None:
         support = (

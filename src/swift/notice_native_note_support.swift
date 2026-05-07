@@ -281,7 +281,7 @@ struct ResolvedRenderedNotice {
 let defaultNoteTitle = "KLMS 공지"
 let defaultArchiveNoteTitle = "KLMS 확인한 공지"
 let nativeNoticeRenderStateVersion = 2
-let nativeNoticeRenderStyleVersion = "2026-05-08-fast-rich-paste-batched-checklists-v3"
+let nativeNoticeRenderStyleVersion = "2026-05-08-fast-rich-paste-batched-checklists-v4"
 let readChecklistLabel = "읽음"
 let importantChecklistLabel = "중요"
 let checklistMenuTitles = ["체크리스트", "Checklist"]
