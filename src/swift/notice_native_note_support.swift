@@ -281,7 +281,7 @@ struct ResolvedRenderedNotice {
 let defaultNoteTitle = "KLMS 공지"
 let defaultArchiveNoteTitle = "KLMS 확인한 공지"
 let nativeNoticeRenderStateVersion = 2
-let nativeNoticeRenderStyleVersion = "2026-05-08-guided-notice-layout-v1"
+let nativeNoticeRenderStyleVersion = "2026-05-08-guided-notice-layout-v2"
 let readChecklistLabel = "읽음"
 let importantChecklistLabel = "중요"
 let noticeReadGuidanceLine = "\"읽음\"만 체크한 공지는 다음 동기화 때 KLMS 확인한 공지에 표시됩니다."

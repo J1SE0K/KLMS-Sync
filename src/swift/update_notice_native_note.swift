@@ -2507,10 +2507,15 @@ func decodeBasicHTMLEntities(_ text: String) -> String {
     text
         .replacingOccurrences(of: "&nbsp;", with: " ")
         .replacingOccurrences(of: "&amp;", with: "&")
+        .replacingOccurrences(of: "&amp", with: "&")
         .replacingOccurrences(of: "&lt;", with: "<")
+        .replacingOccurrences(of: "&lt", with: "<")
         .replacingOccurrences(of: "&gt;", with: ">")
+        .replacingOccurrences(of: "&gt", with: ">")
         .replacingOccurrences(of: "&quot;", with: "\"")
+        .replacingOccurrences(of: "&quot", with: "\"")
         .replacingOccurrences(of: "&#39;", with: "'")
+        .replacingOccurrences(of: "&#39", with: "'")
 }
 
 func htmlPlainText(_ html: String) -> String {
@@ -2550,12 +2555,30 @@ func htmlLineBlocks(_ html: String) -> [(text: String, hasBold: Bool)] {
         let lowercasedInner = inner.lowercased()
         let hasNestedHeading =
             lowercasedInner.range(of: #"<h[1-6]\b"#, options: .regularExpression) != nil
+        let hasBoldFontWeight =
+            lowercasedInner.range(
+                of: #"font-weight\s*:\s*(?:bold|bolder|[6-9]00)"#,
+                options: .regularExpression
+            ) != nil
         let hasBold = tag.hasPrefix("h")
             || hasNestedHeading
             || lowercasedInner.contains("<b")
             || lowercasedInner.contains("<strong")
             || lowercasedInner.contains("bold")
+            || hasBoldFontWeight
         return (normalizedText, hasBold)
+    }
+}
+
+func boldBlockTextsContain(_ targetText: String, boldBlockTexts: Set<String>) -> Bool {
+    if boldBlockTexts.contains(targetText) {
+        return true
+    }
+    guard targetText.count >= 8 else {
+        return false
+    }
+    return boldBlockTexts.contains { blockText in
+        blockText.contains(targetText) || (blockText.count >= 8 && targetText.contains(blockText))
     }
 }
 
@@ -2608,7 +2631,7 @@ func htmlBoldStyleIssues(
             guard !targetText.isEmpty, seen.insert("\(target.label):\(targetText)").inserted else {
                 continue
             }
-            guard boldBlockTexts.contains(targetText) else {
+            guard boldBlockTextsContain(targetText, boldBlockTexts: boldBlockTexts) else {
                 issues.append("bold style missing in html: \(target.label)")
                 continue
             }
@@ -3736,13 +3759,12 @@ func renderNativeNoteOnce(
         }
         activateApplication(pid: elementPID(context.app))
         if !pressMenuIfAvailable(context.app, menuItems), fallbackToBold {
-            ensureTypingTargetReady(context: context, noteTitle: noteTitle, noteID: noteID)
-            _ = pressMenuIfAvailable(context.app, ["굵게", "Bold"])
+            timingLog("style_menu_missing note=\(noteTitle) menu=\(menuItems.joined(separator: "/"))")
         }
         Thread.sleep(forTimeInterval: 0.05)
     }
 
-    func applyBold(_ range: LineRange) {
+    func toggleBold(_ range: LineRange) {
         guard selectRangeForFormatting(
             context: context,
             range: range,
@@ -3846,6 +3868,92 @@ func renderNativeNoteOnce(
         timingLog("readability_validation_targets_finish note=\(noteTitle) bold_targets=\(boldValidationTargets.count)")
     }
 
+    func missingBoldTargets(currentText: String) -> [StyleValidationTarget] {
+        guard let html = noteBodyHTMLByAppleScript(noteTitle: noteTitle) else {
+            return []
+        }
+        let blocks = htmlLineBlocks(html)
+        guard !blocks.isEmpty else {
+            return []
+        }
+        let boldBlockTexts = Set(blocks.filter(\.hasBold).map { oneLine($0.text) })
+
+        func currentLineRange(for targetText: String, preferredRange: LineRange, usedRanges: inout Set<String>) -> LineRange {
+            var bestRange: LineRange?
+            var bestDistance = Int.max
+            for entry in lineEntries(in: currentText) {
+                guard oneLine(entry.text) == targetText else {
+                    continue
+                }
+                let key = "\(entry.range.location):\(entry.range.length)"
+                guard !usedRanges.contains(key) else {
+                    continue
+                }
+                let distance = abs(entry.range.location - preferredRange.location)
+                if distance < bestDistance {
+                    bestDistance = distance
+                    bestRange = entry.range
+                }
+            }
+            guard let bestRange else {
+                return preferredRange
+            }
+            usedRanges.insert("\(bestRange.location):\(bestRange.length)")
+            return bestRange
+        }
+
+        var missingTargets: [StyleValidationTarget] = []
+        var seen: Set<String> = []
+        var usedRanges: Set<String> = []
+        for target in boldValidationTargets {
+            guard let rawTargetText = substring(currentText, range: target.range) else {
+                continue
+            }
+            let targetText = oneLine(rawTargetText)
+            guard !targetText.isEmpty, seen.insert("\(target.label):\(targetText)").inserted else {
+                continue
+            }
+            if !boldBlockTextsContain(targetText, boldBlockTexts: boldBlockTexts) {
+                let currentRange = currentLineRange(
+                    for: targetText,
+                    preferredRange: target.range,
+                    usedRanges: &usedRanges
+                )
+                missingTargets.append(StyleValidationTarget(label: target.label, range: currentRange))
+            }
+        }
+        return missingTargets
+    }
+
+    func reinforceMissingBoldTargetsIfNeeded() {
+        guard !boldValidationTargets.isEmpty else {
+            return
+        }
+
+        for attempt in 0..<3 {
+            let latestText = loadCaptureText(
+                textArea: context.textArea,
+                expectedTitles: plan.renderedNotices.map(\.title)
+            )
+            let missingTargets = missingBoldTargets(currentText: latestText)
+            if missingTargets.isEmpty {
+                timingLog("bold_reinforce_finish note=\(noteTitle) attempt=\(attempt) missing=0")
+                return
+            }
+
+            timingLog(
+                "bold_reinforce_start note=\(noteTitle) attempt=\(attempt) "
+                    + "missing=\(missingTargets.count)"
+            )
+            for target in missingTargets {
+                toggleBold(target.range)
+            }
+            Thread.sleep(forTimeInterval: 0.16)
+        }
+    }
+
+    rememberReadabilityFormattingTargets()
+
     if uiStyleMenuFormattingEnabled {
         timingLog("style_apply_start note=\(noteTitle)")
         applyStyle(
@@ -3855,7 +3963,6 @@ func renderNativeNoteOnce(
         )
 
         let summaryRange = lineRange(plan.summaryLineIndex, fallback: plan.summaryRange)
-        applyBold(summaryRange)
         rememberBoldTarget("summary", summaryRange)
 
         for (offset, index) in plan.importantHeadingLineIndexes.enumerated() {
@@ -3885,15 +3992,14 @@ func renderNativeNoteOnce(
 
         for (offset, index) in plan.noticeMetaLineIndexes.enumerated() {
             let meta = lineRange(index, fallback: plan.noticeMetaRanges[offset])
-            applyBold(meta)
             rememberBoldTarget("notice metadata \(offset + 1)", meta)
         }
 
         for (offset, index) in plan.attachmentHeadingLineIndexes.enumerated() {
             let attachmentHeading = lineRange(index, fallback: plan.attachmentHeadingRanges[offset])
-            applyBold(attachmentHeading)
             rememberBoldTarget("attachment heading \(offset + 1)", attachmentHeading)
         }
+        reinforceMissingBoldTargetsIfNeeded()
         timingLog("style_apply_finish note=\(noteTitle) bold_targets=\(boldValidationTargets.count)")
     } else {
         timingLog(
@@ -3901,8 +4007,6 @@ func renderNativeNoteOnce(
                 + "lines=\(plan.bodyLines.count)"
         )
     }
-
-    rememberReadabilityFormattingTargets()
 
     var currentText = loadCaptureText(
         textArea: context.textArea,

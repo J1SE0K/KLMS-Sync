@@ -185,6 +185,7 @@ Safari 수집은 `FETCH_MIN_WAIT_SECONDS`, `FETCH_STABLE_POLLS`를 써서 DOM이
 - 사용자 눈에 보이는 노트는 `KLMS 공지`, `KLMS 확인한 공지` 두 개를 유지하고, 체크 상태는 `runtime/cache/notice_user_state.json`에 저장한다.
 - 네이티브 공지 메모 renderer는 Swift binary를 tmp build cache에 재사용한다. 공지 변화가 없어도 `읽음`/`중요` 체크 상태는 매번 Notes UI에서 캡처하고, 직전 render state의 `content_hash`와 새 render plan이 같을 때만 Notes 전체 재렌더를 건너뛴다.
 - 공지 본문 굵기와 글자 크기는 기본적으로 HTML/RTF rich paste 한 번으로 적용하고, 느린 Notes Format 메뉴 반복 적용은 끈다. native 제목/머리말 메뉴 스타일을 강제로 다시 쓰려면 `NOTICE_NATIVE_ENABLE_UI_STYLE_FORMAT=1`을 설정한다.
+- native 제목/머리말 메뉴 스타일을 켠 경우에도 `굵게` 메뉴를 무조건 다시 누르지 않고, 형식 적용 후 실제로 굵게가 빠진 줄만 확인해서 다시 보강한다.
 - 공지 체크리스트는 각 공지의 `읽음`/`중요` 두 줄을 한 번에 변환한다. 문제가 있으면 실패한 줄만 개별 변환으로 fallback하고, 기존 한 줄씩 변환으로 되돌리려면 `NOTICE_NATIVE_DISABLE_BATCH_CHECKLIST_FORMAT=1`을 설정한다.
 - `KLMS 확인한 공지`는 머리줄에서 변동 시각을 빼서, 실제 archive 내용이 안 바뀌면 대부분의 sync에서 다시 쓰지 않는다. 다만 체크 상태 캡처는 계속 수행한다.
 - 공지 메모는 render 뒤 note 전체 validator를 돌려 stray checklist나 잘못된 문단 오염을 전수 검사한다. 양식 이상이 감지되면 보수적인 경로로 다시 렌더한다.

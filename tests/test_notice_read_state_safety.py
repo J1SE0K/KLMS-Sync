@@ -132,6 +132,23 @@ class NoticeReadStateSafetyTests(unittest.TestCase):
         self.assertIn("let noticeBodyFontSize: CGFloat = 14", support)
         self.assertIn("line-height:1.42", renderer)
 
+    def test_notice_format_menu_does_not_toggle_bold_off(self) -> None:
+        renderer = (
+            PROJECT_DIR / "src" / "swift" / "update_notice_native_note.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("func missingBoldTargets", renderer)
+        self.assertIn("func reinforceMissingBoldTargetsIfNeeded", renderer)
+        self.assertIn("func boldBlockTextsContain", renderer)
+        self.assertIn("func currentLineRange", renderer)
+        self.assertIn('replacingOccurrences(of: "&amp", with: "&")', renderer)
+        self.assertIn("bold_reinforce_start", renderer)
+        self.assertIn("bold_reinforce_finish", renderer)
+        self.assertIn("font-weight\\s*:\\s*(?:bold|bolder|[6-9]00)", renderer)
+        self.assertNotIn("applyBold(summaryRange)", renderer)
+        self.assertNotIn("applyBold(meta)", renderer)
+        self.assertNotIn("applyBold(attachmentHeading)", renderer)
+
     def test_notice_layout_skips_empty_sections_and_compacts_body_noise(self) -> None:
         renderer = (
             PROJECT_DIR / "src" / "swift" / "update_notice_native_note.swift"
