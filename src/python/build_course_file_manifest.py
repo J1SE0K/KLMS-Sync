@@ -23,6 +23,7 @@ IGNORED_COURSE_NAMES = {"기출문제은행", "공개강좌", "조교 과정", "
 GENERIC_COURSE_NAMES = {"강의실 메인", "course home"}
 IGNORED_ACTIVITY_IDS: set[str] = set()
 COURSE_MATERIAL_BUCKETS = {"folders", "resources"}
+MANIFEST_SOURCE_ENTRY_STYLE_VERSION = "2026-05-08-resource-section-source-title-v2"
 INVALID_FS_CHARS = r'[:/\n\r\t]'
 COURSEBOARD_INLINE_MEDIA_SELECTOR = (
     ".courseboard_view .content img[src], "
@@ -187,6 +188,7 @@ def build_manifest(
 
         manifest.extend(page_entries)
         next_sources[source_url] = {
+            "entry_style_version": MANIFEST_SOURCE_ENTRY_STYLE_VERSION,
             "page_signature": page_signature,
             "entries": page_entries,
         }
@@ -249,6 +251,8 @@ def reusable_manifest_entries(
 ) -> list[dict[str, Any]] | None:
     if str(previous_source_state.get("page_signature", "")) != page_signature:
         return None
+    if str(previous_source_state.get("entry_style_version", "")) != MANIFEST_SOURCE_ENTRY_STYLE_VERSION:
+        return None
 
     entries = previous_source_state.get("entries", [])
     if not isinstance(entries, list):
@@ -279,6 +283,8 @@ def reusable_manifest_entries(
                 "source_url": str(item.get("source_url", "")),
                 "source_title": str(item.get("source_title", "")),
                 "link_text": normalize_whitespace(str(item.get("link_text", ""))),
+                "section_title": normalize_whitespace(str(item.get("section_title", ""))),
+                "activity_title": normalize_whitespace(str(item.get("activity_title", ""))),
                 **copy_klms_timestamp_fields(item),
                 **copy_local_download_fields(item),
             }
@@ -352,9 +358,12 @@ def build_manifest_entries_for_page(
         if not filename or ignored_media_filename(filename):
             continue
 
+        target_source_title = normalize_whitespace(target.get("source_title", "")) or source_title
+        section_title = normalize_whitespace(target.get("section_title", ""))
+        activity_title = normalize_whitespace(target.get("activity_title", "")) or normalize_whitespace(link_text)
         course_dir = sanitize_path_component(course)
         bucket_dir = sanitize_path_component(bucket)
-        source_dir = sanitize_path_component(source_title or "untitled")
+        source_dir = sanitize_path_component(target_source_title or "untitled")
         relative_path = make_unique_relative_path(
             seen_paths,
             course_dir,
@@ -377,8 +386,10 @@ def build_manifest_entries_for_page(
             "absolute_path": str(output_root / relative_path),
             "url": canonical_url or raw_url,
             "source_url": source_url,
-            "source_title": source_title,
+            "source_title": target_source_title,
             "link_text": normalize_whitespace(link_text),
+            "section_title": section_title,
+            "activity_title": activity_title,
             **timestamp_metadata,
         }
         page_entries.append(entry)
@@ -871,21 +882,15 @@ def candidate_file_targets(
     page: dict[str, Any], source_url: str, soup: BeautifulSoup
 ) -> list[dict[str, str]]:
     targets: list[dict[str, str]] = []
-    if is_courseboard_article(source_url):
+    resource_index_targets = resource_index_file_targets(source_url, soup)
+    if resource_index_targets:
+        targets.extend(resource_index_targets)
+    elif is_courseboard_article(source_url):
         links = soup.select(".files a[href]")
+        targets.extend(link_targets(source_url, links))
     else:
         links = soup.select("a[href]")
-
-    for link in links:
-        raw_url = resolve_link_url(source_url, link.get("href", ""))
-        link_text = normalize_whitespace(link.get_text(" ", strip=True))
-        targets.append(
-            {
-                "url": raw_url,
-                "link_text": link_text,
-                "filename_hint": hinted_filename_for_link(raw_url, link, link_text),
-            }
-        )
+        targets.extend(link_targets(source_url, links))
 
     direct_url = direct_download_url_from_page(page)
     if direct_url:
@@ -901,6 +906,69 @@ def candidate_file_targets(
         seen.add(canonical_url)
         deduped.append(target)
     return deduped
+
+
+def link_targets(source_url: str, links: list[Any]) -> list[dict[str, str]]:
+    targets: list[dict[str, str]] = []
+    for link in links:
+        raw_url = resolve_link_url(source_url, link.get("href", ""))
+        link_text = normalize_whitespace(link.get_text(" ", strip=True))
+        targets.append(
+            {
+                "url": raw_url,
+                "link_text": link_text,
+                "filename_hint": hinted_filename_for_link(raw_url, link, link_text),
+            }
+        )
+    return targets
+
+
+def resource_index_file_targets(source_url: str, soup: BeautifulSoup) -> list[dict[str, str]]:
+    if module_name_from_url(source_url) != "resource":
+        return []
+
+    targets: list[dict[str, str]] = []
+    rows = soup.select("table.mod_index tbody tr") or soup.select("table.mod_index tr")
+    for row in rows:
+        link = row.select_one("a[href]")
+        if not link:
+            continue
+
+        cells = row.select("td")
+        link_cell_index = next((index for index, cell in enumerate(cells) if cell.select_one("a[href]")), -1)
+        section_title = resource_row_section_title(cells, link_cell_index)
+        raw_url = resolve_link_url(source_url, link.get("href", ""))
+        link_text = normalize_whitespace(link.get_text(" ", strip=True))
+        targets.append(
+            {
+                "url": raw_url,
+                "link_text": link_text,
+                "filename_hint": hinted_filename_for_link(raw_url, link, link_text),
+                "source_title": section_title,
+                "section_title": section_title,
+                "activity_title": link_text,
+            }
+        )
+    return targets
+
+
+def resource_row_section_title(cells: list[Any], link_cell_index: int) -> str:
+    if link_cell_index <= 0:
+        return ""
+
+    candidates = cells[:link_cell_index]
+    if len(candidates) >= 2 and looks_like_row_number(normalize_whitespace(candidates[0].get_text(" ", strip=True))):
+        candidates = candidates[1:]
+
+    for cell in reversed(candidates):
+        text = normalize_whitespace(cell.get_text(" ", strip=True))
+        if text and not looks_like_row_number(text):
+            return text
+    return ""
+
+
+def looks_like_row_number(text: str) -> bool:
+    return bool(re.fullmatch(r"\d+", normalize_whitespace(text)))
 
 
 def inline_courseboard_media_urls(source_url: str, soup: BeautifulSoup) -> set[str]:

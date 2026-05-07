@@ -67,7 +67,47 @@ class CourseFileManifestTests(unittest.TestCase):
         self.assertEqual(len(manifest), 1)
         self.assertEqual(manifest[0]["course"], "Example Course")
         self.assertEqual(manifest[0]["bucket"], "resources")
+        self.assertEqual(manifest[0]["source_title"], "1주차")
+        self.assertEqual(manifest[0]["section_title"], "1주차")
+        self.assertEqual(manifest[0]["activity_title"], "Week 1 Notes")
         self.assertEqual(manifest[0]["filename"], "Week 1 Notes.pdf")
+        self.assertEqual(
+            manifest[0]["relative_path"],
+            "Example Course/resources/1주차/Week 1 Notes.pdf",
+        )
+
+    def test_manifest_state_rebuilds_when_entry_style_changes(self) -> None:
+        source_state = {
+            "page_signature": "matching",
+            "entries": [
+                {
+                    "course": "Example Course",
+                    "bucket": "resources",
+                    "filename": "wrong.pdf",
+                    "relative_path": "Example Course/resources/강의 자료/wrong.pdf",
+                    "url": "https://klms.kaist.ac.kr/mod/resource/view.php?id=200001",
+                    "source_url": "https://klms.kaist.ac.kr/mod/resource/index.php?id=100001",
+                    "source_title": "강의 자료",
+                    "link_text": "Week 1 Notes",
+                    "klms_timestamp": "",
+                    "klms_timestamp_epoch": None,
+                    "klms_timestamp_text": "",
+                    "klms_timestamp_precision": "",
+                    "klms_timestamp_label": "",
+                    "klms_timestamp_source": "resource-index",
+                    "klms_timestamp_basis": "klms_page",
+                }
+            ],
+        }
+
+        result = build_course_file_manifest.reusable_manifest_entries(
+            source_state,
+            "matching",
+            {"Example Course": {"page_url": "https://klms.kaist.ac.kr/course/view.php?id=100001"}},
+            Path("/tmp/course_files"),
+        )
+
+        self.assertIsNone(result)
 
     def test_file_scan_resolves_relative_resource_links(self) -> None:
         page = {

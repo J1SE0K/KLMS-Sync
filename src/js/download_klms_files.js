@@ -344,12 +344,13 @@ function run(argv) {
         const beforeEntrySignatures = buildDirectoryEntrySignatures(downloadsDir, beforeEntries);
         const originalUrl = String(entry.url || "");
         const targetUrl = withForcedDownload(originalUrl);
-        const allowAnyDownload =
-          String(entry.url || "").includes("/mod/resource/view.php?") ||
+        const isResourceViewDownload = String(entry.url || "").includes("/mod/resource/view.php?");
+        const isMediaPluginDownload =
           /klms\.kaist\.ac\.kr\/pluginfile\.php\/.+\.(mp4|m4v|mov|mp3|m4a|wav)(?:[?#].*)?$/i.test(
             String(entry.url || "")
           );
-        const perFileTimeoutSeconds = allowAnyDownload
+        const allowAnyDownload = isResourceViewDownload || isMediaPluginDownload;
+        const perFileTimeoutSeconds = isMediaPluginDownload
           ? Math.max(timeoutSeconds, 600)
           : timeoutSeconds;
         if (!targetUrl) {
@@ -504,6 +505,11 @@ function run(argv) {
         activeFilename = baseName(downloadedPath) || manifestFilename;
         if (!activeFilename) {
           throw new Error(`Could not determine downloaded filename: ${downloadedPath}`);
+        }
+        if (!filenameCompatibleWithExpected(activeFilename, manifestFilename)) {
+          throw new Error(
+            `Downloaded filename does not match expected file type: ${activeFilename} expected ${manifestFilename}`
+          );
         }
         if (isIgnoredDownloadName(activeFilename)) {
           throw new Error(`Ignoring hidden/system download artifact: ${downloadedPath}`);
@@ -719,7 +725,6 @@ function persistDownloadProgress(
   results
 ) {
   writeJson(manifestPath, manifest);
-  syncManifestStateEntries(manifestState, manifest);
   if (manifestState && typeof manifestState === "object" && manifestState.sources) {
     writeJson(manifestStatePath, manifestState);
   }
@@ -1013,8 +1018,12 @@ function buildRecordedFilenameIndex(downloadLog) {
     downloadLog && typeof downloadLog === "object" && Array.isArray(downloadLog.results)
       ? downloadLog.results
       : [];
+  const ambiguousFilenames = ambiguousRecordedFilenames(results);
 
   results.forEach((result) => {
+    if (!downloadLogFilenameReuseAllowed(result, ambiguousFilenames)) {
+      return;
+    }
     const key = reusableUrlKey(result.url);
     const filename = String(
       result.filename || baseName(result.downloads_path || "") || baseName(result.destination_path || "")
@@ -1035,7 +1044,48 @@ function recordedFilenameForEntry(entry, recordedFilenameIndex) {
   if (!key) {
     return "";
   }
-  return String(recordedFilenameIndex[key] || "").trim();
+  const recordedFilename = String(recordedFilenameIndex[key] || "").trim();
+  return filenameCompatibleWithExpected(recordedFilename, entry && entry.filename)
+    ? recordedFilename
+    : "";
+}
+
+function filenameCompatibleWithExpected(filename, expectedFilename) {
+  const expected = String(expectedFilename || "").trim();
+  const actual = String(filename || "").trim();
+  if (!actual) {
+    return false;
+  }
+  if (!expected || actual === expected || isCandidateFilename(actual, expected)) {
+    return true;
+  }
+
+  const expectedFamily = extensionFamily(fileExtension(expected));
+  const actualFamily = extensionFamily(fileExtension(actual));
+  if (!expectedFamily || !actualFamily) {
+    return true;
+  }
+  return expectedFamily === actualFamily;
+}
+
+function fileExtension(filename) {
+  const name = baseName(filename).toLowerCase();
+  const index = name.lastIndexOf(".");
+  return index >= 0 ? name.slice(index) : "";
+}
+
+function extensionFamily(extension) {
+  const ext = String(extension || "").toLowerCase();
+  if (ext === ".ppt" || ext === ".pptx") {
+    return "presentation";
+  }
+  if (ext === ".doc" || ext === ".docx") {
+    return "document";
+  }
+  if (ext === ".xls" || ext === ".xlsx") {
+    return "spreadsheet";
+  }
+  return ext;
 }
 
 function syncManifestStateEntries(manifestState, manifest) {
@@ -1090,7 +1140,7 @@ function waitForDownloadedFile(
         return false;
       }
       if (allowAnyDownload) {
-        return true;
+        return freshDownloadFilenameMatchesExpected(name, expectedFilename);
       }
       return isCandidateFilename(name, expectedFilename);
     });
@@ -1109,6 +1159,18 @@ function waitForDownloadedFile(
     }
   }
   return "";
+}
+
+function freshDownloadFilenameMatchesExpected(filename, expectedFilename) {
+  const actual = String(filename || "").trim();
+  const expected = String(expectedFilename || "").trim();
+  if (!actual || isTransientDownloadName(actual)) {
+    return false;
+  }
+  if (!expected) {
+    return true;
+  }
+  return isCandidateFilename(actual, expected);
 }
 
 function retryInlineResourceDownload(
@@ -1191,7 +1253,7 @@ function fetchKlmsFileViaSafari(windowRef, targetUrl, backupRoot, fileIndex, exp
 
   waitForHtmlDocumentReady(windowRef, 10);
   const payload = fetchBinaryPayloadViaSafari(windowRef, targetUrl);
-  if (!payload.ok || !payload.base64) {
+  if (!payload.ok || !payload.base64 || !fetchedPayloadCompatibleWithExpected(payload)) {
     return "";
   }
   const resolvedFilename = resolveFetchedFilename(payload, targetUrl, expectedFilename);
@@ -1213,6 +1275,16 @@ function resolveFetchedFilename(payload, targetUrl, expectedFilename) {
     extractFilenameFromUrl(targetUrl) ||
     String(expectedFilename || "").trim() ||
     "attachment"
+  );
+}
+
+function fetchedPayloadCompatibleWithExpected(payload) {
+  const contentType = String(payload && payload.contentType || "").toLowerCase();
+  const headText = String(payload && payload.headText || "").trim().toLowerCase();
+  return !(
+    contentType.includes("text/html") ||
+    headText.startsWith("<!doctype html") ||
+    headText.startsWith("<html")
   );
 }
 
@@ -1315,6 +1387,19 @@ function fetchBinaryPayloadViaSafari(windowRef, targetUrl) {
     "    }",
     "    return btoa(parts.join(''));",
     "  }",
+    "  function bytesToAsciiPreview(bytes) {",
+    "    var length = Math.min(bytes.length, 128);",
+    "    var parts = [];",
+    "    for (var index = 0; index < length; index += 1) {",
+    "      var value = bytes[index];",
+    "      if ((value >= 32 && value <= 126) || value === 9 || value === 10 || value === 13) {",
+    "        parts.push(String.fromCharCode(value));",
+    "      } else {",
+    "        parts.push('.');",
+    "      }",
+    "    }",
+    "    return parts.join('');",
+    "  }",
     "  try {",
     "    var xhr = new XMLHttpRequest();",
     "    xhr.open('GET', targetUrl, false);",
@@ -1334,6 +1419,7 @@ function fetchBinaryPayloadViaSafari(windowRef, targetUrl) {
     "      responseUrl: xhr.responseURL || '',",
     "      contentDisposition: xhr.getResponseHeader('Content-Disposition') || '',",
     "      contentType: xhr.getResponseHeader('Content-Type') || '',",
+    "      headText: bytesToAsciiPreview(bytes),",
     "      base64: bytesToBase64(bytes)",
     "    });",
     "  } catch (error) {",
@@ -2156,8 +2242,12 @@ function buildReusableFileIndex(downloadLog) {
     downloadLog && typeof downloadLog === "object" && Array.isArray(downloadLog.results)
       ? downloadLog.results
       : [];
+  const ambiguousFilenames = ambiguousRecordedFilenames(results);
 
   results.forEach((result) => {
+    if (!downloadLogFilenameReuseAllowed(result, ambiguousFilenames)) {
+      return;
+    }
     if (isTransientDownloadName(result.filename || "")) {
       return;
     }
@@ -2194,11 +2284,12 @@ function buildReusableFileIndex(downloadLog) {
 
 function findReusableSourcePath(index, entry, destinationPath, trackedArchivePath) {
   const candidateKeys = [
-    reusableFileKey(entry.url, entry.filename),
-    reusableUrlKey(entry.url),
-  ].filter(Boolean);
+    { key: reusableFileKey(entry.url, entry.filename), requireCompatibleFilename: false },
+    { key: reusableUrlKey(entry.url), requireCompatibleFilename: true },
+  ].filter((candidate) => candidate.key);
 
-  for (const key of candidateKeys) {
+  for (const candidateKey of candidateKeys) {
+    const key = candidateKey.key;
     if (!index[key]) {
       continue;
     }
@@ -2210,6 +2301,12 @@ function findReusableSourcePath(index, entry, destinationPath, trackedArchivePat
         if (samePath(candidatePath, destinationPath) || samePath(candidatePath, trackedArchivePath)) {
           return false;
         }
+        if (
+          candidateKey.requireCompatibleFilename &&
+          !filenameCompatibleWithExpected(baseName(candidatePath), entry.filename)
+        ) {
+          return false;
+        }
         return true;
       }) || "";
     if (reusablePath) {
@@ -2217,6 +2314,44 @@ function findReusableSourcePath(index, entry, destinationPath, trackedArchivePat
     }
   }
   return "";
+}
+
+function ambiguousRecordedFilenames(results) {
+  const ownersByFilename = {};
+  results.forEach((result) => {
+    const filename = String(
+      result && (result.filename || baseName(result.downloads_path || "") || baseName(result.destination_path || ""))
+    ).trim();
+    if (!filename || isTransientDownloadName(filename)) {
+      return;
+    }
+    const owner = `${String(result.course || "")}\n${String(result.source_url || "")}`;
+    if (!ownersByFilename[filename]) {
+      ownersByFilename[filename] = new Set();
+    }
+    ownersByFilename[filename].add(owner);
+  });
+
+  const ambiguous = new Set();
+  Object.keys(ownersByFilename).forEach((filename) => {
+    if (ownersByFilename[filename].size > 1) {
+      ambiguous.add(filename);
+    }
+  });
+  return ambiguous;
+}
+
+function downloadLogFilenameReuseAllowed(result, ambiguousFilenames) {
+  const filename = String(
+    result && (result.filename || baseName(result.downloads_path || "") || baseName(result.destination_path || ""))
+  ).trim();
+  if (!filename || isTransientDownloadName(filename)) {
+    return false;
+  }
+  if (String(result && result.manifest_filename || "").trim() === filename) {
+    return true;
+  }
+  return !(ambiguousFilenames && ambiguousFilenames.has(filename));
 }
 
 function reusableFileKey(url, filename) {
