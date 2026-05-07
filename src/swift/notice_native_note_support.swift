@@ -179,6 +179,7 @@ struct DisplayCourse {
 struct RenderLine {
     let text: String
     let isChecklist: Bool
+    let isBold: Bool
 }
 
 struct RenderChunk {
@@ -277,7 +278,7 @@ struct ResolvedRenderedNotice {
 let defaultNoteTitle = "KLMS 공지"
 let defaultArchiveNoteTitle = "KLMS 확인한 공지"
 let nativeNoticeRenderStateVersion = 2
-let nativeNoticeRenderStyleVersion = "2026-04-28-focus-format-verify"
+let nativeNoticeRenderStyleVersion = "2026-05-08-readability-format-verify"
 let readChecklistLabel = "읽음"
 let importantChecklistLabel = "중요"
 let checklistMenuTitles = ["체크리스트", "Checklist"]

@@ -1612,10 +1612,15 @@ function updateNoticeNativeNote(
             scriptDir
           )
       );
+      const formatOutput = verifyNoticeNativeNoteReadableFormat(
+        target.key === "archive" ? archiveNoteName : noteName,
+        target.key,
+        scriptDir
+      );
       results.push({
         target: target.key,
         status: "ok",
-        output: String(output || "").trim(),
+        output: [String(output || "").trim(), formatOutput].filter(Boolean).join("\n"),
       });
     } catch (error) {
       const message = `Native notice note render warning (${target.key}): ${String(error)}`;
@@ -1630,6 +1635,38 @@ function updateNoticeNativeNote(
   });
 
   return { results, renderWarnings };
+}
+
+function appleScriptStringLiteral(value) {
+  return `"${String(value || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')}"`;
+}
+
+function noteBodyHTMLViaAppleScript(noteName, scriptDir) {
+  const script = [
+    'tell application "Notes"',
+    "  try",
+    `    return body of note ${appleScriptStringLiteral(noteName)}`,
+    "  on error",
+    '    return ""',
+    "  end try",
+    "end tell",
+  ].join("\n");
+  return runCommand(["/usr/bin/osascript", "-e", script], scriptDir);
+}
+
+function verifyNoticeNativeNoteReadableFormat(noteName, targetKey, scriptDir) {
+  const html = noteBodyHTMLViaAppleScript(noteName, scriptDir);
+  const boldTagCount = (String(html || "").match(/<(b|strong)\b|<h[1-6]\b|font-weight\s*:\s*(bold|[6-9]00)/gi) || []).length;
+  const minimumBoldTags = targetKey === "primary" ? 20 : 2;
+  if (boldTagCount < minimumBoldTags) {
+    throw new Error(
+      `Native notice note readability format missing (${targetKey}): ` +
+        `bold_tags=${boldTagCount} minimum=${minimumBoldTags}`
+    );
+  }
+  return `Verified native notice readability format: ${targetKey} bold_tags=${boldTagCount}`;
 }
 
 function maybeSkipStableNoticeNativeUpdate(

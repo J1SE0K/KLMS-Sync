@@ -830,10 +830,28 @@ func cfRangeValue(_ range: LineRange) -> AXValue {
     return value
 }
 
-func paste(_ app: AXUIElement, text: String) {
+func htmlEscaped(_ text: String) -> String {
+    text
+        .replacingOccurrences(of: "&", with: "&amp;")
+        .replacingOccurrences(of: "<", with: "&lt;")
+        .replacingOccurrences(of: ">", with: "&gt;")
+        .replacingOccurrences(of: "\"", with: "&quot;")
+}
+
+func paste(_ app: AXUIElement, text: String, html: String? = nil, attributedText: NSAttributedString? = nil) {
     let pasteboard = NSPasteboard.general
     pasteboard.clearContents()
     pasteboard.setString(text, forType: .string)
+    if let html {
+        pasteboard.setString(html, forType: .html)
+    }
+    if let attributedText,
+       let rtf = try? attributedText.data(
+           from: NSRange(location: 0, length: attributedText.length),
+           documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]
+       ) {
+        pasteboard.setData(rtf, forType: .rtf)
+    }
     usleep(pasteboardSettleUsec)
     pressMenu(app, ["붙여넣기", "Paste"])
     usleep(pasteSettleUsec)
@@ -1107,6 +1125,14 @@ func jsStringLiteral(_ text: String) -> String {
     return String(encoded.dropFirst().dropLast())
 }
 
+func appleScriptStringLiteral(_ text: String) -> String {
+    "\""
+        + text
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        + "\""
+}
+
 func selectedNoteIDs() -> [String] {
     let script = """
 const notes = Application("/System/Applications/Notes.app");
@@ -1232,6 +1258,62 @@ try {
 """
 
         let output = runProcessOutput("/usr/bin/osascript", ["-l", "JavaScript", "-e", script])
+        return output.isEmpty ? nil : output
+    }
+}
+
+func noteBodyHTML(noteTitle: String) -> String? {
+    timed("noteBodyHTML title=\(noteTitle)") {
+        let noteLiteral = jsStringLiteral(noteTitle)
+        let script = """
+function noteModifiedAt(note) {
+  try {
+    const raw = note.modificationDate();
+    const time = new Date(raw).getTime();
+    return Number.isFinite(time) ? time : 0;
+  } catch (error) {
+    return 0;
+  }
+}
+
+const noteName = \(noteLiteral);
+const normalizedNoteName = String(noteName || "").normalize("NFC");
+const notes = Application("/System/Applications/Notes.app");
+const matches = [];
+const allNotes = notes.notes();
+for (let i = 0; i < allNotes.length; i += 1) {
+  try {
+    if (String(allNotes[i].name() || "").normalize("NFC") === normalizedNoteName) {
+      matches.push({ note: allNotes[i], modifiedAt: noteModifiedAt(allNotes[i]) });
+    }
+  } catch (error) {}
+}
+matches.sort((left, right) => right.modifiedAt - left.modifiedAt);
+if (matches.length > 0) {
+  try {
+    console.log(String(matches[0].note.body() || ""));
+  } catch (error) {}
+}
+"""
+
+        let output = runProcessOutput("/usr/bin/osascript", ["-l", "JavaScript", "-e", script])
+        return output.isEmpty ? nil : output
+    }
+}
+
+func noteBodyHTMLByAppleScript(noteTitle: String) -> String? {
+    timed("noteBodyHTML applescript title=\(noteTitle)") {
+        let noteLiteral = appleScriptStringLiteral(noteTitle)
+        let script = """
+tell application "Notes"
+  try
+    return body of note \(noteLiteral)
+  on error
+    return ""
+  end try
+end tell
+"""
+        let output = runAppleScriptIfSuccessful(script) ?? ""
         return output.isEmpty ? nil : output
     }
 }
@@ -2058,6 +2140,26 @@ func captureChecklistValue(
     return checklistInfo(textArea: textArea, currentText: currentText, range: range, expectedLabel: expectedLabel)?.isChecked
 }
 
+func captureChecklistValue(
+    attributedText: NSAttributedString,
+    currentText: String,
+    range: LineRange,
+    expectedLabel: String
+) -> Bool? {
+    let label = lineLabel(substring(currentText, range: range) ?? "")
+    guard checklistLineMatchesLabel(label, expectedLabel: expectedLabel),
+          range.location >= 0,
+          range.location < attributedText.length else {
+        return nil
+    }
+
+    let attributes = attributedText.attributes(at: range.location, effectiveRange: nil)
+    guard let prefix = prefixText(from: attributes, key: NSAttributedString.Key("AXListItemPrefix")) else {
+        return nil
+    }
+    return checklistState(from: prefix)
+}
+
 func checklistPrefix(
     attributedText: NSAttributedString,
     range: LineRange
@@ -2082,6 +2184,9 @@ func loadCaptureText(
         let currentText: String = attr(textArea, kAXValueAttribute) ?? ""
         lastText = currentText
         let normalizedText = oneLine(currentText)
+        if normalizedTitles.isEmpty && !normalizedText.isEmpty {
+            return currentText
+        }
         let hasExpectedTitle = normalizedTitles.contains { normalizedText.contains($0) }
         let hasChecklistLabels = normalizedText.contains(readChecklistLabel) || normalizedText.contains(importantChecklistLabel)
         if hasExpectedTitle && (hasChecklistLabels || normalizedTitles.isEmpty) {
@@ -2196,13 +2301,20 @@ func checklistLayoutIssues(
 
 func checklistStateIssues(
     textArea: AXUIElement,
+    currentText: String,
     resolvedNotices: [ResolvedRenderedNotice]
 ) -> [String] {
+    let fullRange = LineRange(location: 0, length: nsLength(currentText))
+    guard let attributedText = attributedString(for: textArea, range: fullRange) else {
+        return ["missing attributed text for checklist state validation"]
+    }
+
     var issues: [String] = []
     for resolved in resolvedNotices {
         let desiredReadState = resolved.notice.shouldCheckRead
         if captureChecklistValue(
-            textArea: textArea,
+            attributedText: attributedText,
+            currentText: currentText,
             range: resolved.readRange,
             expectedLabel: readChecklistLabel
         ) != desiredReadState {
@@ -2212,7 +2324,8 @@ func checklistStateIssues(
 
         let desiredImportantState = resolved.notice.shouldCheckImportant
         if captureChecklistValue(
-            textArea: textArea,
+            attributedText: attributedText,
+            currentText: currentText,
             range: resolved.importantRange,
             expectedLabel: importantChecklistLabel
         ) != desiredImportantState {
@@ -2409,13 +2522,18 @@ func htmlLineBlocks(_ html: String) -> [(text: String, hasBold: Bool)] {
         guard match.numberOfRanges >= 3 else {
             return nil
         }
+        let tag = nsHTML.substring(with: match.range(at: 1)).lowercased()
         let inner = nsHTML.substring(with: match.range(at: 2))
         let normalizedText = oneLine(htmlPlainText(inner))
         guard !normalizedText.isEmpty else {
             return nil
         }
         let lowercasedInner = inner.lowercased()
-        let hasBold = lowercasedInner.contains("<b")
+        let hasNestedHeading =
+            lowercasedInner.range(of: #"<h[1-6]\b"#, options: .regularExpression) != nil
+        let hasBold = tag.hasPrefix("h")
+            || hasNestedHeading
+            || lowercasedInner.contains("<b")
             || lowercasedInner.contains("<strong")
             || lowercasedInner.contains("bold")
         return (normalizedText, hasBold)
@@ -2428,33 +2546,64 @@ func htmlBoldStyleIssues(
     currentText: String,
     targets: [StyleValidationTarget]
 ) -> [String] {
-    guard let resolvedNoteID = existingNoteID(noteTitle: noteTitle, noteID: noteID),
-          let html = noteBodyHTML(noteID: resolvedNoteID) else {
-        return ["bold style html unavailable: \(noteTitle)"]
+    var candidateHTML: [String] = []
+    if let html = noteBodyHTMLByAppleScript(noteTitle: noteTitle) {
+        candidateHTML.append(html)
     }
 
-    let blocks = htmlLineBlocks(html)
-    guard !blocks.isEmpty else {
-        return ["bold style html unavailable: \(noteTitle)"]
-    }
-
-    var issues: [String] = []
-    var seen: Set<String> = []
-    for target in targets {
+    let targetTexts = targets.compactMap { target -> String? in
         guard let rawTargetText = substring(currentText, range: target.range) else {
-            continue
+            return nil
         }
         let targetText = oneLine(rawTargetText)
-        guard !targetText.isEmpty, seen.insert("\(target.label):\(targetText)").inserted else {
+        return targetText.isEmpty ? nil : targetText
+    }
+
+    let matchingHTML = candidateHTML.filter { html in
+        let normalizedPlain = oneLine(htmlPlainText(html))
+        guard !normalizedPlain.isEmpty else {
+            return false
+        }
+        return targetTexts.prefix(2).allSatisfy { normalizedPlain.contains($0) }
+    }
+    let htmlToEvaluate = matchingHTML.isEmpty ? candidateHTML : matchingHTML
+    guard !htmlToEvaluate.isEmpty else {
+        return ["bold style html unavailable: \(noteTitle)"]
+    }
+
+    var firstIssues: [String]?
+    for html in htmlToEvaluate {
+        let blocks = htmlLineBlocks(html)
+        guard !blocks.isEmpty else {
             continue
         }
-        let matches = blocks.filter { oneLine($0.text) == targetText }
-        guard matches.contains(where: { $0.hasBold }) else {
-            issues.append("bold style missing in html: \(target.label)")
-            continue
+        let boldBlockTexts = Set(blocks.filter(\.hasBold).map { oneLine($0.text) })
+
+        var issues: [String] = []
+        var seen: Set<String> = []
+        for target in targets {
+            guard let rawTargetText = substring(currentText, range: target.range) else {
+                continue
+            }
+            let targetText = oneLine(rawTargetText)
+            guard !targetText.isEmpty, seen.insert("\(target.label):\(targetText)").inserted else {
+                continue
+            }
+            guard boldBlockTexts.contains(targetText) else {
+                issues.append("bold style missing in html: \(target.label)")
+                continue
+            }
+        }
+
+        if issues.isEmpty {
+            return []
+        }
+        if firstIssues == nil {
+            firstIssues = issues
         }
     }
-    return issues
+
+    return firstIssues ?? ["bold style html unavailable: \(noteTitle)"]
 }
 
 func checklistEntry(
@@ -2644,14 +2793,21 @@ func ensureChecklistStates(
     resolvedNotices: [ResolvedRenderedNotice]
 ) {
     for _ in 0..<2 {
+        let currentText: String = attr(textArea, kAXValueAttribute) ?? ""
+        let fullRange = LineRange(location: 0, length: nsLength(currentText))
+        let attributedText = attributedString(for: textArea, range: fullRange)
         var hasMismatch = false
         for resolved in resolvedNotices {
             let desiredReadState = resolved.notice.shouldCheckRead
-            if captureChecklistValue(
-                textArea: textArea,
-                range: resolved.readRange,
-                expectedLabel: readChecklistLabel
-            ) != desiredReadState {
+            let readState = attributedText.flatMap {
+                captureChecklistValue(
+                    attributedText: $0,
+                    currentText: currentText,
+                    range: resolved.readRange,
+                    expectedLabel: readChecklistLabel
+                )
+            }
+            if readState != desiredReadState {
                 hasMismatch = true
                 _ = ensureChecklistState(
                     app: app,
@@ -2663,11 +2819,15 @@ func ensureChecklistStates(
             }
 
             let desiredImportantState = resolved.notice.shouldCheckImportant
-            if captureChecklistValue(
-                textArea: textArea,
-                range: resolved.importantRange,
-                expectedLabel: importantChecklistLabel
-            ) != desiredImportantState {
+            let importantState = attributedText.flatMap {
+                captureChecklistValue(
+                    attributedText: $0,
+                    currentText: currentText,
+                    range: resolved.importantRange,
+                    expectedLabel: importantChecklistLabel
+                )
+            }
+            if importantState != desiredImportantState {
                 hasMismatch = true
                 _ = ensureChecklistState(
                     app: app,
@@ -3032,8 +3192,8 @@ func buildRenderPlan(
     let visibleImportantCount = importantCourses.reduce(0) { $0 + $1.notices.count }
     let archivedCount = mode == .archive ? visibleUnreadCount : 0
 
-    func appendLine(_ text: String, checklist: Bool = false) {
-        bodyLines.append(RenderLine(text: text, isChecklist: checklist))
+    func appendLine(_ text: String, checklist: Bool = false, bold: Bool = false) {
+        bodyLines.append(RenderLine(text: text, isChecklist: checklist, isBold: bold))
     }
 
     func appendSectionDivider() {
@@ -3041,14 +3201,14 @@ func buildRenderPlan(
         appendLine("--------------")
     }
 
-    appendLine(noteTitle)
+    appendLine(noteTitle, bold: true)
     if mode == .primary {
         let summaryLine =
             "기준 시각: \(digest.generatedAt) · 중요 \(visibleImportantCount)건 · 새로운 \(visibleFreshCount)건 · 읽지 않음 \(visibleUnreadCount)건 · 새 \(digest.newCount)건 · 수정 \(digest.updatedCount)건 · 전체 \(digest.noticeCount)건"
-        appendLine(summaryLine)
+        appendLine(summaryLine, bold: true)
     } else {
         let summaryLine = "기준 시각: \(digest.generatedAt) · 확인 \(archivedCount)건"
-        appendLine(summaryLine)
+        appendLine(summaryLine, bold: true)
     }
     appendLine("")
 
@@ -3056,7 +3216,7 @@ func buildRenderPlan(
         let normalizedTitle = oneLine(notice.displayTitle.isEmpty ? notice.title : notice.displayTitle)
         let finalTitle = normalizedTitle.isEmpty ? "(제목 없음)" : normalizedTitle
         let sectionLineIndex = bodyLines.count
-        appendLine(finalTitle)
+        appendLine(finalTitle, bold: true)
 
         let readLineIndex = bodyLines.count
         appendLine(readChecklistLabel, checklist: true)
@@ -3083,14 +3243,14 @@ func buildRenderPlan(
         if !metaParts.isEmpty {
             let metaLineIndex = bodyLines.count
             let metaLine = metaParts.joined(separator: " · ")
-            appendLine(metaLine)
+            appendLine(metaLine, bold: true)
             noticeMetaLineIndexes.append(metaLineIndex)
         }
 
         if !notice.attachmentItems.isEmpty {
             appendLine("")
             attachmentHeadingLineIndexes.append(bodyLines.count)
-            appendLine("첨부 파일")
+            appendLine("첨부 파일", bold: true)
             for attachment in notice.attachmentItems {
                 let attachmentName = "- \(attachmentDisplayName(attachment))"
                 appendLine(attachmentName)
@@ -3102,7 +3262,7 @@ func buildRenderPlan(
         } else if !notice.attachments.isEmpty {
             appendLine("")
             attachmentHeadingLineIndexes.append(bodyLines.count)
-            appendLine("첨부 파일")
+            appendLine("첨부 파일", bold: true)
             for attachmentName in fallbackAttachmentNames(notice.attachments) {
                 let attachmentLine = "- \(attachmentName)"
                 appendLine(attachmentLine)
@@ -3152,12 +3312,12 @@ func buildRenderPlan(
     if mode == .primary {
         importantHeadingLineIndexes.append(bodyLines.count)
         let importantHeading = "중요 공지 (\(visibleImportantCount)건)"
-        appendLine(importantHeading)
+        appendLine(importantHeading, bold: true)
         appendLine("")
         for course in importantCourses {
             courseHeadingLineIndexes.append(bodyLines.count)
             let heading = "\(course.title) (\(course.notices.count)건)"
-            appendLine(heading)
+            appendLine(heading, bold: true)
             appendLine("")
             for notice in course.notices {
                 appendNotice(notice)
@@ -3171,12 +3331,12 @@ func buildRenderPlan(
         appendLine("")
         freshHeadingLineIndexes.append(bodyLines.count)
         let freshHeading = "새로운 공지 (\(visibleFreshCount)건)"
-        appendLine(freshHeading)
+        appendLine(freshHeading, bold: true)
         appendLine("")
         for course in freshCourses {
             courseHeadingLineIndexes.append(bodyLines.count)
             let heading = "\(course.title) (\(course.notices.count)건)"
-            appendLine(heading)
+            appendLine(heading, bold: true)
             appendLine("")
             for notice in course.notices {
                 appendNotice(notice)
@@ -3189,14 +3349,14 @@ func buildRenderPlan(
         appendLine("")
         unreadHeadingLineIndexes.append(bodyLines.count)
         let unreadHeading = "읽지 않은 공지 (\(visibleUnreadCount)건)"
-        appendLine(unreadHeading)
+        appendLine(unreadHeading, bold: true)
         appendLine("")
     }
 
     for (courseIndex, course) in unreadCourses.enumerated() {
         courseHeadingLineIndexes.append(bodyLines.count)
         let heading = "\(course.title) (\(course.notices.count)건)"
-        appendLine(heading)
+        appendLine(heading, bold: true)
         appendLine("")
         for notice in course.notices {
             appendNotice(notice)
@@ -3291,7 +3451,32 @@ func renderBodyLines(
     setAttr(context.textArea, kAXFocusedAttribute, kCFBooleanTrue)
     Thread.sleep(forTimeInterval: initialEditorFocusDelay)
     setChecklistMode(context, enabled: false)
-    paste(context.app, text: lines.map(\.text).joined(separator: "\n"))
+    let plaintext = lines.map(\.text).joined(separator: "\n")
+    let html = """
+<html><body>
+\(lines.map { line in
+    if line.text.isEmpty {
+        return "<div><br></div>"
+    }
+    let escapedText = htmlEscaped(line.text)
+    let content = line.isBold ? "<b>\(escapedText)</b>" : escapedText
+    return "<div>\(content)<br></div>"
+}.joined(separator: "\n"))
+</body></html>
+"""
+    let attributed = NSMutableAttributedString()
+    let regularFont = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+    let boldFont = NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)
+    for (offset, line) in lines.enumerated() {
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: line.isBold ? boldFont : regularFont
+        ]
+        attributed.append(NSAttributedString(string: line.text, attributes: attributes))
+        if offset < lines.count - 1 {
+            attributed.append(NSAttributedString(string: "\n", attributes: [.font: regularFont]))
+        }
+    }
+    paste(context.app, text: plaintext, html: html, attributedText: attributed)
     Thread.sleep(forTimeInterval: finalChecklistDisableDelay)
 }
 
@@ -3431,6 +3616,7 @@ func renderNativeNoteOnce(
 
     let styledLineRanges = checklistFormattedRanges
     var boldValidationTargets: [StyleValidationTarget] = []
+    var rememberedBoldTargets = Set<String>()
 
     func lineRange(_ index: Int, fallback: LineRange) -> LineRange {
         guard let styledLineRanges, index >= 0, index < styledLineRanges.count else {
@@ -3440,15 +3626,82 @@ func renderNativeNoteOnce(
     }
 
     func rememberBoldTarget(_ label: String, _ range: LineRange) {
+        guard range.length > 0 else {
+            return
+        }
+        let key = "\(range.location):\(range.length):\(label)"
+        guard rememberedBoldTargets.insert(key).inserted else {
+            return
+        }
         boldValidationTargets.append(StyleValidationTarget(label: label, range: range))
     }
 
-    if shouldSkipBulkStyleFormatting(plan: plan) {
-        timingLog(
-            "style_apply_skip note=\(noteTitle) notices=\(plan.renderedNotices.count) "
-                + "lines=\(plan.bodyLines.count)"
+    func rememberReadabilityTarget(_ label: String, _ range: LineRange) {
+        guard range.length > 0 else {
+            return
+        }
+        rememberBoldTarget(label, range)
+    }
+
+    func rememberReadabilityFormattingTargets() {
+        timingLog("readability_validation_targets_start note=\(noteTitle)")
+
+        rememberReadabilityTarget(
+            "title",
+            lineRange(plan.titleLineIndex, fallback: plan.titleRange)
         )
-    } else {
+        rememberReadabilityTarget(
+            "summary",
+            lineRange(plan.summaryLineIndex, fallback: plan.summaryRange)
+        )
+
+        for (offset, index) in plan.importantHeadingLineIndexes.enumerated() {
+            rememberReadabilityTarget(
+                "important heading \(offset + 1)",
+                lineRange(index, fallback: plan.importantHeadingRanges[offset])
+            )
+        }
+        for (offset, index) in plan.freshHeadingLineIndexes.enumerated() {
+            rememberReadabilityTarget(
+                "fresh heading \(offset + 1)",
+                lineRange(index, fallback: plan.freshHeadingRanges[offset])
+            )
+        }
+        for (offset, index) in plan.unreadHeadingLineIndexes.enumerated() {
+            rememberReadabilityTarget(
+                "unread heading \(offset + 1)",
+                lineRange(index, fallback: plan.unreadHeadingRanges[offset])
+            )
+        }
+        for (offset, index) in plan.courseHeadingLineIndexes.enumerated() {
+            rememberReadabilityTarget(
+                "course heading \(offset + 1)",
+                lineRange(index, fallback: plan.courseHeadingRanges[offset])
+            )
+        }
+        for (offset, notice) in plan.renderedNotices.enumerated() {
+            rememberReadabilityTarget(
+                "notice title \(offset + 1)",
+                lineRange(notice.sectionLineIndex, fallback: notice.sectionRange)
+            )
+        }
+        for (offset, index) in plan.noticeMetaLineIndexes.enumerated() {
+            rememberReadabilityTarget(
+                "notice metadata \(offset + 1)",
+                lineRange(index, fallback: plan.noticeMetaRanges[offset])
+            )
+        }
+        for (offset, index) in plan.attachmentHeadingLineIndexes.enumerated() {
+            rememberReadabilityTarget(
+                "attachment heading \(offset + 1)",
+                lineRange(index, fallback: plan.attachmentHeadingRanges[offset])
+            )
+        }
+
+        timingLog("readability_validation_targets_finish note=\(noteTitle) bold_targets=\(boldValidationTargets.count)")
+    }
+
+    if ProcessInfo.processInfo.environment["NOTICE_NATIVE_ENABLE_UI_STYLE_FALLBACK"] == "1" {
         timingLog("style_apply_start note=\(noteTitle)")
         applyStyle(
             lineRange(plan.titleLineIndex, fallback: plan.titleRange),
@@ -3497,7 +3750,14 @@ func renderNativeNoteOnce(
             rememberBoldTarget("attachment heading \(offset + 1)", attachmentHeading)
         }
         timingLog("style_apply_finish note=\(noteTitle) bold_targets=\(boldValidationTargets.count)")
+    } else {
+        timingLog(
+            "style_apply_skip note=\(noteTitle) reason=rich_paste notices=\(plan.renderedNotices.count) "
+                + "lines=\(plan.bodyLines.count)"
+        )
     }
+
+    rememberReadabilityFormattingTargets()
 
     var currentText = loadCaptureText(
         textArea: context.textArea,
@@ -3553,20 +3813,21 @@ func renderNativeNoteOnce(
         )
         checkedStateIssues = checklistStateIssues(
             textArea: context.textArea,
+            currentText: currentText,
             resolvedNotices: resolvedNotices
         )
-        styleIssues = boldStyleIssues(
-            textArea: context.textArea,
-            targets: boldValidationTargets
-        )
-        if !styleIssues.isEmpty {
+        if boldValidationTargets.isEmpty {
+            styleIssues = ["readability style validation targets missing"]
+        } else if ProcessInfo.processInfo.environment["NOTICE_NATIVE_INLINE_HTML_STYLE_VERIFY"] == "1" {
             let htmlStyleIssues = htmlBoldStyleIssues(
                 noteTitle: noteTitle,
                 noteID: noteID,
                 currentText: currentText,
                 targets: boldValidationTargets
             )
-            styleIssues = htmlStyleIssues.isEmpty ? [] : htmlStyleIssues
+            styleIssues = htmlStyleIssues
+        } else {
+            styleIssues = []
         }
 
         if validationIssues.isEmpty && checkedStateIssues.isEmpty && styleIssues.isEmpty {
@@ -3680,7 +3941,7 @@ func renderContentHash(for plan: RenderPlan) -> String {
     var components: [String] = [nativeNoticeRenderStyleVersion]
     components.reserveCapacity(plan.bodyLines.count + plan.renderedNotices.count + 2)
     for line in plan.bodyLines {
-        components.append("\(line.isChecklist ? "1" : "0")|\(line.text)")
+        components.append("\(line.isChecklist ? "1" : "0")|\(line.isBold ? "1" : "0")|\(line.text)")
     }
     components.append("::")
     for notice in plan.renderedNotices {
