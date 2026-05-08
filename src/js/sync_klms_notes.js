@@ -8,6 +8,9 @@ const LEGACY_REMINDER_MARKER_PREFIXES = ["KLMS_ASSIGN_ID:"];
 const REMINDER_MARKER_PREFIXES = [REMINDER_MARKER_PREFIX].concat(LEGACY_REMINDER_MARKER_PREFIXES);
 const NATIVE_NOTICE_RENDER_STYLE_VERSION = "2026-05-08-guided-notice-layout-v3";
 let DEBUG_STDERR_ENABLED = false;
+let ACTIVE_STAGE_TELEMETRY = null;
+let COMMAND_TIMING_ENABLED = true;
+let COMMAND_TIMING_MIN_DURATION_MS = 0;
 const REMINDER_LIST_APPEARANCE = {
   "KLMS 과제": { color: "#0F766E", emblem: "" },
   "KLMS 확인 필요": { color: "#C2410C", emblem: "" },
@@ -53,6 +56,7 @@ function parseCliArgs(argv, scriptDir) {
 function run(argv) {
   const steps = [];
   const stageTelemetry = createStageTelemetry("");
+  ACTIVE_STAGE_TELEMETRY = stageTelemetry;
   try {
     beginStage(steps, stageTelemetry, "start");
     const scriptDir = scriptDirectory();
@@ -64,6 +68,11 @@ function run(argv) {
     const usePrefetchedDashboard = cli.usePrefetchedDashboard;
     const config = parseEnvFile(configPath);
     DEBUG_STDERR_ENABLED = config.KLMS_DEBUG_STDERR === "1";
+    COMMAND_TIMING_ENABLED = config.SYNC_COMMAND_TIMING_ENABLED !== "0";
+    COMMAND_TIMING_MIN_DURATION_MS = Math.max(
+      0,
+      Math.round(Number(config.SYNC_COMMAND_TIMING_MIN_DURATION_MS || "0"))
+    );
     debugStderr(`sync start scope=${scope}`);
     const notesEnabled = config.NOTES_SYNC_ENABLED === "1";
     const examCalendarEnabled = config.EXAM_CALENDAR_SYNC_ENABLED !== "0";
@@ -91,6 +100,16 @@ function run(argv) {
       reminderDeviceAlertMode.toLowerCase() !== "off" &&
       config.REMINDER_DEVICE_ALERTS_ENABLED !== "0";
     const reminderStageAlertsEnabled = config.REMINDER_STAGE_ALERTS_ENABLED !== "0";
+    const cleanDisabledStageAlerts = readEnabledConfig(
+      config,
+      "REMINDER_CLEAN_DISABLED_STAGE_ALERTS",
+      false
+    );
+    const recreateStageAlertList = readEnabledConfig(
+      config,
+      "REMINDER_RECREATE_STAGE_ALERT_LIST",
+      true
+    );
     const reminderAlertListName = config.REMINDER_ALERT_LIST_NAME || "KLMS 알림";
     const completedReminderRetentionDays = Math.max(
       0,
@@ -792,6 +811,8 @@ function run(argv) {
             deviceAlertsEnabled: reminderDeviceAlertsEnabled,
             deviceAlertMode: reminderDeviceAlertMode,
             stageAlertsEnabled: reminderStageAlertsEnabled,
+            cleanDisabledStageAlerts,
+            recreateStageAlertList,
             alertListName: reminderAlertListName,
           }
         );
@@ -847,10 +868,12 @@ function parseNonEmptyLines(text) {
 }
 
 function createStageTelemetry(scope) {
+  const startedMs = Date.now();
   return {
-    version: 1,
+    version: 2,
     scope: String(scope || ""),
-    run_started_at: new Date().toISOString(),
+    run_started_at: new Date(startedMs).toISOString(),
+    run_started_ms: startedMs,
     completed_at: "",
     status: "running",
     failed_stage: "",
@@ -922,11 +945,14 @@ function persistStageTelemetry(stageTelemetry) {
     scope: stageTelemetry.scope,
     run_started_at: stageTelemetry.run_started_at,
     completed_at: stageTelemetry.completed_at,
+    elapsed_ms: Math.max(0, Date.now() - Number(stageTelemetry.run_started_ms || Date.now())),
     status: stageTelemetry.status,
     failed_stage: stageTelemetry.failed_stage,
     error: stageTelemetry.error,
     stages: stageTelemetry.stages,
     events: stageTelemetry.events || [],
+    slowest_stages: slowestTelemetryEntries(stageTelemetry.stages || [], 8),
+    slowest_events: slowestTelemetryEntries(stageTelemetry.events || [], 12),
     current_stage: stageTelemetry.currentStage
       ? {
           name: stageTelemetry.currentStage.name,
@@ -946,6 +972,7 @@ function runTelemetryEvent(stageTelemetry, group, name, fn) {
   const event = {
     group: String(group || ""),
     name: String(name || ""),
+    stage: currentTelemetryStageName(stageTelemetry),
     started_at: new Date(startedMs).toISOString(),
     finished_at: "",
     duration_ms: 0,
@@ -953,9 +980,7 @@ function runTelemetryEvent(stageTelemetry, group, name, fn) {
     error: "",
   };
   if (stageTelemetry) {
-    stageTelemetry.events = stageTelemetry.events || [];
-    stageTelemetry.events.push(event);
-    persistStageTelemetry(stageTelemetry);
+    appendTelemetryEvent(stageTelemetry, event);
   }
   try {
     const result = fn();
@@ -978,6 +1003,36 @@ function runTelemetryEvent(stageTelemetry, group, name, fn) {
     }
     throw error;
   }
+}
+
+function appendTelemetryEvent(stageTelemetry, event) {
+  if (!stageTelemetry || !event) {
+    return;
+  }
+  stageTelemetry.events = stageTelemetry.events || [];
+  stageTelemetry.events.push(event);
+  persistStageTelemetry(stageTelemetry);
+}
+
+function currentTelemetryStageName(stageTelemetry) {
+  return String((stageTelemetry && stageTelemetry.currentStage && stageTelemetry.currentStage.name) || "");
+}
+
+function slowestTelemetryEntries(entries, limit) {
+  return (entries || [])
+    .filter((entry) => String(entry.status || "") !== "running")
+    .slice()
+    .sort((left, right) => Number(right.duration_ms || 0) - Number(left.duration_ms || 0))
+    .slice(0, limit || 8)
+    .map((entry) => ({
+      group: entry.group || "",
+      name: entry.name || "",
+      stage: entry.stage || "",
+      duration_ms: Number(entry.duration_ms || 0),
+      started_at: entry.started_at || "",
+      finished_at: entry.finished_at || "",
+      status: entry.status || "",
+    }));
 }
 
 function readEnabledConfig(config, key, fallback) {
@@ -1975,7 +2030,36 @@ function fetchPages(urls, waitSeconds, scriptDir, options) {
   );
 
   runCommand(command, scriptDir);
+  recordFetchSummaryTelemetry(options && options.summaryPath, context);
   return JSON.parse(readText(outputPath));
+}
+
+function recordFetchSummaryTelemetry(summaryPath, context) {
+  if (!ACTIVE_STAGE_TELEMETRY || !summaryPath || !fileExists(summaryPath)) {
+    return;
+  }
+  const summary = safeValue(() => JSON.parse(readText(summaryPath)));
+  if (!summary) {
+    return;
+  }
+  appendTelemetryEvent(ACTIVE_STAGE_TELEMETRY, {
+    group: "fetch-summary",
+    name: String(context || summary.context || "fetch"),
+    stage: currentTelemetryStageName(ACTIVE_STAGE_TELEMETRY),
+    started_at: String(summary.started_at || ""),
+    finished_at: String(summary.finished_at || ""),
+    duration_ms: Number(summary.duration_ms || 0),
+    status: "ok",
+    error: "",
+    backend: String(summary.backend || ""),
+    requested_mode: String(summary.requested_mode || ""),
+    effective_mode: String(summary.effective_mode || ""),
+    total_urls: Number(summary.total_urls || 0),
+    fetched_urls: Number(summary.fetched_urls || 0),
+    reused_urls: Number(summary.reused_urls || 0),
+    changed_urls: Number(summary.changed_urls || 0),
+    output_path: String(summary.out_path || ""),
+  });
 }
 
 function syncCalendarsFromState(stateJsonPath, scriptDir, config, calendarOptions) {
@@ -2090,8 +2174,18 @@ function syncRemindersFromState(
   }
 
   const remindersApp = Application("/System/Applications/Reminders.app");
-  const reminderSnapshot = buildReminderAppSnapshot(remindersApp);
-  const desired = buildDesiredReminders(normalizeSyncEntries(state.content), reminderOptions);
+  const reminderSnapshot = runTelemetryEvent(
+    ACTIVE_STAGE_TELEMETRY,
+    "reminders",
+    "snapshot-lists",
+    () => buildReminderAppSnapshot(remindersApp)
+  );
+  const desired = runTelemetryEvent(
+    ACTIVE_STAGE_TELEMETRY,
+    "reminders",
+    "build-desired",
+    () => buildDesiredReminders(normalizeSyncEntries(state.content), reminderOptions)
+  );
   const retentionMs = completedReminderRetentionDays * 24 * 3600 * 1000;
   const activeSummary = syncReminderList(
     remindersApp,
@@ -2115,9 +2209,14 @@ function syncRemindersFromState(
       reminderSnapshot,
       alertListName,
       desired.alerts,
-      0
+      0,
+      { recreateList: reminderOptions.recreateStageAlertList !== false }
     );
-  } else if (findReminderList(remindersApp, alertListName, reminderSnapshot)) {
+  } else if (
+    reminderOptions &&
+    reminderOptions.cleanDisabledStageAlerts &&
+    findReminderList(remindersApp, alertListName, reminderSnapshot)
+  ) {
     alertSummary = syncReminderList(remindersApp, reminderSnapshot, alertListName, [], 0);
   }
   return `${activeSummary} ${issueSummary} ${alertSummary}`;
@@ -2155,11 +2254,21 @@ function importCompletedRemindersToOverrides(stateJsonPath, overridesJsonPath, l
   }
 
   const remindersApp = Application("/System/Applications/Reminders.app");
-  const reminderSnapshot = buildReminderAppSnapshot(remindersApp);
-  const completedIdentifiers = collectCompletedReminderIdentifiers(
-    remindersApp,
-    listNames,
-    reminderSnapshot
+  const reminderSnapshot = runTelemetryEvent(
+    ACTIVE_STAGE_TELEMETRY,
+    "completed-reminders",
+    "snapshot-lists",
+    () => buildReminderAppSnapshot(remindersApp)
+  );
+  const completedIdentifiers = runTelemetryEvent(
+    ACTIVE_STAGE_TELEMETRY,
+    "completed-reminders",
+    "collect-completed",
+    () => collectCompletedReminderIdentifiers(
+      remindersApp,
+      listNames,
+      reminderSnapshot
+    )
   );
   if (completedIdentifiers.length === 0) {
     return "completed-reminders=ok imported=0 changed=0";
@@ -2251,9 +2360,30 @@ function syncReminderList(
   reminderSnapshot,
   listName,
   desiredReminders,
-  completedRetentionMs
+  completedRetentionMs,
+  options
 ) {
-  const list = getOrCreateReminderList(remindersApp, listName, reminderSnapshot);
+  if (options && options.recreateList) {
+    runTelemetryEvent(
+      ACTIVE_STAGE_TELEMETRY,
+      "reminders",
+      `recreate-list:${listName}`,
+      () => {
+        const existing = findReminderList(remindersApp, listName, reminderSnapshot);
+        if (existing) {
+          forgetReminderListSnapshot(reminderSnapshot, listName, existing);
+          remindersApp.delete(existing);
+        }
+      }
+    );
+  }
+
+  const list = runTelemetryEvent(
+    ACTIVE_STAGE_TELEMETRY,
+    "reminders",
+    `resolve-list:${listName}`,
+    () => getOrCreateReminderList(remindersApp, listName, reminderSnapshot)
+  );
   const listId = safeString(() => list.id());
   const desiredById = {};
 
@@ -2261,8 +2391,13 @@ function syncReminderList(
     desiredById[item.identifier] = item;
   });
 
-  const existingReminders = loadReminderItemsForList(list, reminderSnapshot)
-    .filter((item) => extractIdentifierFromText(safeString(() => item.body())));
+  const existingReminders = runTelemetryEvent(
+    ACTIVE_STAGE_TELEMETRY,
+    "reminders",
+    `load-list:${listName}`,
+    () => loadReminderItemsForList(list, reminderSnapshot)
+      .filter((item) => extractIdentifierFromText(safeString(() => item.body())))
+  );
 
   const seenExistingIdentifiers = new Set();
   const existingIds = new Set();
@@ -2271,83 +2406,115 @@ function syncReminderList(
   let deleted = 0;
   let retainedCompleted = 0;
 
-  existingReminders.forEach((reminder) => {
-    const identifier = extractIdentifierFromText(safeString(() => reminder.body()));
-    if (!identifier) {
-      return;
-    }
+  runTelemetryEvent(
+    ACTIVE_STAGE_TELEMETRY,
+    "reminders",
+    `reconcile-existing:${listName}`,
+    () => {
+      existingReminders.forEach((reminder) => {
+        const identifier = extractIdentifierFromText(safeString(() => reminder.body()));
+        if (!identifier) {
+          return;
+        }
 
-    if (
-      identifier.startsWith("exam:") ||
-      identifier.startsWith("assignment-candidate:")
-    ) {
-      remindersApp.delete(reminder);
-      deleted += 1;
-      return;
-    }
+        if (
+          identifier.startsWith("exam:") ||
+          identifier.startsWith("assignment-candidate:")
+        ) {
+          remindersApp.delete(reminder);
+          deleted += 1;
+          return;
+        }
 
-    if (seenExistingIdentifiers.has(identifier)) {
-      remindersApp.delete(reminder);
-      deleted += 1;
-      return;
-    }
-    seenExistingIdentifiers.add(identifier);
+        if (seenExistingIdentifiers.has(identifier)) {
+          remindersApp.delete(reminder);
+          deleted += 1;
+          return;
+        }
+        seenExistingIdentifiers.add(identifier);
 
-    const desired = desiredById[identifier];
-    if (!desired) {
-      if (shouldRetainCompletedReminder(reminder, completedRetentionMs, identifier)) {
-        retainedCompleted += 1;
-        return;
-      }
-      remindersApp.delete(reminder);
-      deleted += 1;
-      return;
-    }
+        const desired = desiredById[identifier];
+        if (!desired) {
+          if (shouldRetainCompletedReminder(reminder, completedRetentionMs, identifier)) {
+            retainedCompleted += 1;
+            return;
+          }
+          remindersApp.delete(reminder);
+          deleted += 1;
+          return;
+        }
 
-    const updateResult = applyReminderIfNeeded(reminder, desired);
-    if (updateResult === "recreate") {
-      remindersApp.delete(reminder);
-      deleted += 1;
-      return;
-    }
+        const updateResult = applyReminderIfNeeded(reminder, desired);
+        if (updateResult === "recreate") {
+          remindersApp.delete(reminder);
+          deleted += 1;
+          return;
+        }
 
-    if (updateResult === "updated") {
-      updated += 1;
-    }
+        if (updateResult === "updated") {
+          updated += 1;
+        }
 
-    existingIds.add(identifier);
-  });
+        existingIds.add(identifier);
+      });
+    }
+  );
 
-  desiredReminders.forEach((desired) => {
-    if (existingIds.has(desired.identifier)) {
-      return;
-    }
-    const properties = {
-      name: desired.title,
-      body: desired.body,
-    };
-    if (desired.dueDate) {
-      properties.dueDate = desired.dueDate;
-    }
-    if (desired.remindMeDate) {
-      properties.remindMeDate = desired.remindMeDate;
-    }
+  runTelemetryEvent(
+    ACTIVE_STAGE_TELEMETRY,
+    "reminders",
+    `create-missing:${listName}`,
+    () => {
+      desiredReminders.forEach((desired) => {
+        if (existingIds.has(desired.identifier)) {
+          return;
+        }
+        const properties = {
+          name: desired.title,
+          body: desired.body,
+        };
+        if (desired.dueDate) {
+          properties.dueDate = desired.dueDate;
+        }
+        if (desired.remindMeDate) {
+          properties.remindMeDate = desired.remindMeDate;
+        }
 
-    const createdReminder = remindersApp.make({
-      new: "reminder",
-      at: list,
-      withProperties: properties,
-    });
-    if (reminderSnapshot && listId) {
-      if (!reminderSnapshot.remindersByListId[listId]) {
-        reminderSnapshot.remindersByListId[listId] = [];
-      }
-      reminderSnapshot.remindersByListId[listId].push(createdReminder);
+        const createdReminder = remindersApp.make({
+          new: "reminder",
+          at: list,
+          withProperties: properties,
+        });
+        if (reminderSnapshot && listId) {
+          if (!reminderSnapshot.remindersByListId[listId]) {
+            reminderSnapshot.remindersByListId[listId] = [];
+          }
+          reminderSnapshot.remindersByListId[listId].push(createdReminder);
+        }
+        created += 1;
+      });
     }
-    created += 1;
-  });
+  );
 
   return `reminders=${listName} created=${created} updated=${updated} deleted=${deleted} retained_completed=${retainedCompleted} total=${desiredReminders.length}`;
+}
+
+function forgetReminderListSnapshot(reminderSnapshot, listName, list) {
+  if (!reminderSnapshot || !listName || !list) {
+    return;
+  }
+
+  const listId = safeString(() => list.id());
+  if (listId) {
+    delete reminderSnapshot.remindersByListId[listId];
+    delete reminderSnapshot.loadedListIds[listId];
+  }
+
+  const existing = reminderSnapshot.listsByName[listName] || [];
+  reminderSnapshot.listsByName[listName] = existing.filter((item) => {
+    const itemId = safeString(() => item.id());
+    return !listId || itemId !== listId;
+  });
 }
 
 function collectCompletedReminderIdentifiers(remindersApp, listNames, reminderSnapshot) {
@@ -3053,7 +3220,17 @@ function shellQuote(value) {
 }
 
 function ensureDir(path) {
-  runCommand(["/bin/mkdir", "-p", path], currentDirectory());
+  const error = Ref();
+  const ok = $.NSFileManager.defaultManager.createDirectoryAtPathWithIntermediateDirectoriesAttributesError(
+    $(path).stringByStandardizingPath,
+    true,
+    $.NSDictionary.dictionary,
+    error
+  );
+  if (!ok) {
+    const message = error[0] ? ObjC.unwrap(error[0].localizedDescription) : "unknown error";
+    throw new Error(`Failed to create directory ${path}: ${message}`);
+  }
 }
 
 function fileExists(path) {
@@ -3094,6 +3271,10 @@ function freshExistingFilesSince(paths, startedEpoch) {
 
 function parentDirectory(path) {
   return ObjC.unwrap($(path).stringByDeletingLastPathComponent);
+}
+
+function baseName(path) {
+  return ObjC.unwrap($(String(path || "")).lastPathComponent);
 }
 
 function readText(path) {
@@ -3165,7 +3346,31 @@ function scriptDirectory() {
 }
 
 function runCommand(argv, cwd) {
-  debugStderr(`runCommand:start ${argv.join(" ")}`);
+  const commandText = argv.join(" ");
+  debugStderr(`runCommand:start ${commandText}`);
+  const telemetry = ACTIVE_STAGE_TELEMETRY && COMMAND_TIMING_ENABLED ? ACTIVE_STAGE_TELEMETRY : null;
+  const startedMs = Date.now();
+  const commandEvent = telemetry
+    ? {
+        group: "command",
+        name: commandTelemetryName(argv),
+        stage: currentTelemetryStageName(telemetry),
+        command: argv.map((item) => String(item)),
+        cwd: String(cwd || ""),
+        started_at: new Date(startedMs).toISOString(),
+        finished_at: "",
+        duration_ms: 0,
+        status: "running",
+        exit_status: null,
+        stdout_bytes: 0,
+        stderr_bytes: 0,
+        error: "",
+      }
+    : null;
+  if (telemetry && COMMAND_TIMING_MIN_DURATION_MS === 0) {
+    appendTelemetryEvent(telemetry, commandEvent);
+  }
+
   const task = $.NSTask.alloc.init;
   task.setLaunchPath($(argv[0]));
   task.setArguments($(argv.slice(1)));
@@ -3178,20 +3383,92 @@ function runCommand(argv, cwd) {
   task.setStandardOutput(stdoutPipe);
   task.setStandardError(stderrPipe);
 
-  task.launch;
-  task.waitUntilExit;
+  try {
+    task.launch;
+    task.waitUntilExit;
+  } catch (error) {
+    finishCommandTelemetryEvent(telemetry, commandEvent, startedMs, {
+      status: "error",
+      exitStatus: null,
+      stdoutBytes: 0,
+      stderrBytes: 0,
+      error: String(error),
+    });
+    throw error;
+  }
 
   const stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile;
   const stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile;
   const stdoutText = nsDataToString(stdoutData);
   const stderrText = nsDataToString(stderrData);
+  const exitStatus = Number(task.terminationStatus);
+  const stdoutBytes = nsDataLength(stdoutData);
+  const stderrBytes = nsDataLength(stderrData);
 
-  if (task.terminationStatus !== 0) {
-    throw new Error(stderrText || stdoutText || `Command failed: ${argv.join(" ")}`);
+  if (exitStatus !== 0) {
+    const errorText = stderrText || stdoutText || `Command failed: ${commandText}`;
+    finishCommandTelemetryEvent(telemetry, commandEvent, startedMs, {
+      status: "error",
+      exitStatus,
+      stdoutBytes,
+      stderrBytes,
+      error: errorText,
+    });
+    throw new Error(errorText);
   }
 
+  finishCommandTelemetryEvent(telemetry, commandEvent, startedMs, {
+    status: "ok",
+    exitStatus,
+    stdoutBytes,
+    stderrBytes,
+    error: "",
+  });
   debugStderr(`runCommand:done ${argv[0]}`);
   return stdoutText;
+}
+
+function commandTelemetryName(argv) {
+  const parts = (argv || []).map((item) => String(item || ""));
+  const executable = baseName(parts[0] || "command");
+  const script = parts.find((part) => /\.(py|js|swift|sh|mjs)$/.test(part));
+  if (script) {
+    return `${executable} ${baseName(script)}`;
+  }
+  return executable;
+}
+
+function finishCommandTelemetryEvent(telemetry, event, startedMs, result) {
+  if (!telemetry || !event) {
+    return;
+  }
+  const finishedMs = Date.now();
+  const durationMs = Math.max(0, finishedMs - startedMs);
+  event.finished_at = new Date(finishedMs).toISOString();
+  event.duration_ms = durationMs;
+  event.status = String(result.status || "ok");
+  event.exit_status = result.exitStatus;
+  event.stdout_bytes = Number(result.stdoutBytes || 0);
+  event.stderr_bytes = Number(result.stderrBytes || 0);
+  event.error = result.error ? firstLine(String(result.error), 400) : "";
+  if (COMMAND_TIMING_MIN_DURATION_MS > 0 && durationMs >= COMMAND_TIMING_MIN_DURATION_MS) {
+    appendTelemetryEvent(telemetry, event);
+    return;
+  }
+  persistStageTelemetry(telemetry);
+}
+
+function nsDataLength(data) {
+  if (!data) {
+    return 0;
+  }
+  return Number(data.length || 0);
+}
+
+function firstLine(text, maxLength) {
+  const line = String(text || "").split(/\r?\n/)[0] || "";
+  const limit = Math.max(1, maxLength || 400);
+  return line.length > limit ? `${line.slice(0, limit)}...` : line;
 }
 
 function debugStderr(message) {

@@ -167,7 +167,7 @@ Safari 수집은 `FETCH_MIN_WAIT_SECONDS`, `FETCH_STABLE_POLLS`를 써서 DOM이
 
 시험 일정은 KLMS 대시보드에 직접 안 보여도, 각 과목의 `Notice 게시판`, `Course Material`, 강의계획서 링크를 추가로 확인해서 후보를 찾는다. `Notice` 게시판은 제목에 시험 키워드가 없어도 새 글/수정 글 본문을 다시 읽어서, 본문에만 적힌 시험 일정도 후보로 잡는다. 새 후보는 바로 `시험` 캘린더에 넣지 않고 확인 대기 상태로 남기며, 승인된 항목만 `시험 일정` 섹션과 `시험` 캘린더에 반영한다. KLMS에서 날짜만 확인되고 과목별 수업 시간이 확인되면 시험 시간을 수업 시간으로 잡고, 수업 시간도 없으면 시간 미상으로 표시된다.
 일반 sync는 게시판/폴더의 HTML 페이지만 추가 확인하고, `pluginfile` 같은 첨부 문서 URL 자체는 따라가지 않는다. 첨부파일 다운로드는 파일 정리 단계에서만 일어난다.
-`NOTICE_SUMMARY_ENABLED=1`이면 `sync_klms_notice.sh` 또는 `sync_klms_all.sh` 실행 시 `Notice` 게시판의 새 글/수정 글만 article 단위로 다시 읽어 `runtime/cache/notice_digest.json`, `runtime/cache/notice_summary_state.json`을 갱신한다. 최소 탐색 기본값에서는 공지 정리 단계가 `Notice` 게시판 경로만 우선 다시 보고, 자료실/리소스 경로는 공지 sync에서 기본적으로 따라가지 않는다. 각 과목 `Notice` 게시판은 페이지네이션까지 따라가며 누적 추적하고, `NOTICE_NOTE_NAME`과 `NOTICE_ARCHIVE_NOTE_NAME` 두 메모를 네이티브 제목/머리말/체크리스트 형식으로 갱신한다. Notes 체크 상태 캡처나 렌더 단계가 실패하면 전체 notice sync도 실패로 끝나며, 자세한 원인은 `runtime/cache/notice_note_render_warning.txt`에 남긴다. stage별 소요 시간은 `runtime/cache/{core,notice}/stage_timings.json`에서 볼 수 있다.
+`NOTICE_SUMMARY_ENABLED=1`이면 `sync_klms_notice.sh` 또는 `sync_klms_all.sh` 실행 시 `Notice` 게시판의 새 글/수정 글만 article 단위로 다시 읽어 `runtime/cache/notice_digest.json`, `runtime/cache/notice_summary_state.json`을 갱신한다. 최소 탐색 기본값에서는 공지 정리 단계가 `Notice` 게시판 경로만 우선 다시 보고, 자료실/리소스 경로는 공지 sync에서 기본적으로 따라가지 않는다. 각 과목 `Notice` 게시판은 페이지네이션까지 따라가며 누적 추적하고, `NOTICE_NOTE_NAME`과 `NOTICE_ARCHIVE_NOTE_NAME` 두 메모를 네이티브 제목/머리말/체크리스트 형식으로 갱신한다. Notes 체크 상태 캡처나 렌더 단계가 실패하면 전체 notice sync도 실패로 끝나며, 자세한 원인은 `runtime/cache/notice_note_render_warning.txt`에 남긴다. stage별 소요 시간은 `runtime/cache/{core,notice}/stage_timings.json`에서 볼 수 있고, `slowest_stages`와 `slowest_events`에는 병목 후보가 자동 정렬된다. `SYNC_COMMAND_TIMING_ENABLED=1`이면 각 하위 명령의 시작/종료/소요 시간도 `events`에 남긴다.
 
 - 메인 메모 `KLMS 공지`는 `중요 공지 -> 새로운 공지 -> 읽지 않은 공지` 순서로 보인다.
 - 보관 메모 `KLMS 확인한 공지`에는 `읽음`이면서 `중요`가 아닌 공지만 모아둔다.
@@ -205,6 +205,8 @@ Safari 수집은 `FETCH_MIN_WAIT_SECONDS`, `FETCH_STABLE_POLLS`를 써서 DOM이
 - `Help Desk` 공지는 시험 후보로 넣지 않고, 시간 정보가 있으면 `HELP_DESK_CALENDAR_SYNC_ENABLED=1`일 때 `기타` 같은 일반 캘린더에 `[KLMS 헬프데스크]` 일정으로 넣는다.
 - iPhone과 MacBook 양쪽 알림은 iCloud Reminders의 기본 `due date` 알림을 사용한다. 따라서 `KLMS 과제` 목록이 iCloud 계정 아래에 있어야 한다.
 - `REMINDER_STAGE_ALERTS_ENABLED=1`이면 별도 iCloud 목록 `REMINDER_ALERT_LIST_NAME`에 `1일 전 / 2시간 전` 단계 알림용 리마인더를 자동으로 만든다. Apple Reminders 한 항목에는 여러 알림 시점을 넣을 수 없어서, 이 단계 알림은 별도 리마인더 항목으로 구현한다.
+- `REMINDER_STAGE_ALERTS_ENABLED=0`일 때는 `KLMS 알림` 목록 정리를 기본적으로 건너뛴다. 예전 단계 알림을 한 번 비우고 싶을 때만 `REMINDER_CLEAN_DISABLED_STAGE_ALERTS=1`을 켠다.
+- 단계 알림 목록은 생성물 전용 목록이라 `REMINDER_RECREATE_STAGE_ALERT_LIST=1`일 때 항목별 비교 대신 목록을 재생성해서 Reminders 동기화 시간을 줄인다.
 - `REMINDER_DEVICE_ALERTS_ENABLED=1`은 별도 `remind me date`를 강제로 넣는 옵션인데, Reminders 표시 시각을 앞당겨 보이게 만들 수 있어서 기본값은 `0`으로 둔다.
 - 리마인더 본문에는 `과목 / 마감 / 해야 할 일 / KLMS 링크`가 들어간다.
 - 확인 대기 후보는 Reminders에 만들지 않고, core 결과와 state를 통해서만 확인한다. 공지 기반 과제는 별도 후보로 남기지 않는다.
