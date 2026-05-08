@@ -7,7 +7,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 COMMON_SH="$SCRIPT_DIR/src/sh/klms_common.sh"
 source "$COMMON_SH"
 
-klms_init_context "$SCRIPT_DIR/run_all_parallel.sh" "${1:-}"
+klms_parse_entry_args "$@"
+klms_init_context "$SCRIPT_DIR/run_all_parallel.sh" "$KLMS_ENTRY_CONFIG_ARG"
 klms_acquire_shared_sync_lock
 trap 'klms_release_shared_sync_lock' EXIT
 klms_require_login
@@ -28,7 +29,7 @@ files_log="$log_dir/files.log"
   /usr/bin/env -u KLMS_SHARED_SYNC_LOCK_HELD -u KLMS_SHARED_SYNC_LOCK_DIR \
     KLMS_USE_EXISTING_DASHBOARD=1 \
     KLMS_PARENT_LOGIN_PREFLIGHT_READY=1 \
-    /bin/zsh ./sync_klms_core.sh "$CONFIG_PATH"
+    /bin/zsh ./sync_klms_core.sh "$CONFIG_PATH" "${KLMS_ENTRY_EXTRA_ARGS[@]}"
 ) >"$core_log" 2>&1 &
 core_pid=$!
 
@@ -37,7 +38,7 @@ core_pid=$!
   /usr/bin/env -u KLMS_SHARED_SYNC_LOCK_HELD -u KLMS_SHARED_SYNC_LOCK_DIR \
     KLMS_USE_EXISTING_DASHBOARD=1 \
     KLMS_PARENT_LOGIN_PREFLIGHT_READY=1 \
-    /bin/zsh ./sync_klms_notice.sh "$CONFIG_PATH"
+    /bin/zsh ./sync_klms_notice.sh "$CONFIG_PATH" "${KLMS_ENTRY_EXTRA_ARGS[@]}"
 ) >"$notice_log" 2>&1 &
 notice_pid=$!
 
@@ -46,7 +47,7 @@ notice_pid=$!
   /usr/bin/env -u KLMS_SHARED_SYNC_LOCK_HELD -u KLMS_SHARED_SYNC_LOCK_DIR \
     KLMS_USE_EXISTING_DASHBOARD=1 \
     KLMS_PARENT_LOGIN_PREFLIGHT_READY=1 \
-    /bin/zsh ./refresh_course_files.sh "$CONFIG_PATH"
+    /bin/zsh ./refresh_course_files.sh "$CONFIG_PATH" "${KLMS_ENTRY_EXTRA_ARGS[@]}"
 ) >"$files_log" 2>&1 &
 files_pid=$!
 

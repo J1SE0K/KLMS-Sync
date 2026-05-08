@@ -34,6 +34,8 @@ cp "$SCRIPT_DIR/run_all_full.sh" "$INSTALL_DIR/"
 cp "$SCRIPT_DIR/refresh_course_files.sh" "$INSTALL_DIR/"
 cp "$SCRIPT_DIR/run_all_parallel.sh" "$INSTALL_DIR/"
 cp "$SCRIPT_DIR/verify_sync_state.sh" "$INSTALL_DIR/"
+cp "$SCRIPT_DIR/doctor.sh" "$INSTALL_DIR/"
+cp "$SCRIPT_DIR/sync_report.sh" "$INSTALL_DIR/"
 cp "$SCRIPT_DIR/config.env" "$INSTALL_DIR/"
 if [[ -f "$SCRIPT_DIR/manual_assignment_overrides.json" ]]; then
   cp "$SCRIPT_DIR/manual_assignment_overrides.json" "$INSTALL_DIR/"
@@ -50,7 +52,9 @@ chmod +x \
   "$INSTALL_DIR/run_all_full.sh" \
   "$INSTALL_DIR/run_all_parallel.sh" \
   "$INSTALL_DIR/refresh_course_files.sh" \
-  "$INSTALL_DIR/verify_sync_state.sh"
+  "$INSTALL_DIR/verify_sync_state.sh" \
+  "$INSTALL_DIR/doctor.sh" \
+  "$INSTALL_DIR/sync_report.sh"
 
 find "$INSTALL_DIR/src/sh" "$INSTALL_DIR/src/js" "$INSTALL_DIR/src/python" -type f \
   \( -name '*.sh' -o -name '*.js' -o -name '*.mjs' -o -name '*.py' \) \

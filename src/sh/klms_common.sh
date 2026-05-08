@@ -102,6 +102,28 @@ klms_init_context() {
   export KLMS_SRC_DIR KLMS_SH_DIR KLMS_JS_DIR KLMS_PYTHON_DIR KLMS_SWIFT_DIR
 }
 
+klms_parse_entry_args() {
+  KLMS_ENTRY_CONFIG_ARG=""
+  KLMS_ENTRY_EXTRA_ARGS=()
+  KLMS_DRY_RUN="${KLMS_DRY_RUN:-0}"
+
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --dry-run)
+        KLMS_DRY_RUN=1
+        KLMS_ENTRY_EXTRA_ARGS+=("--dry-run")
+        ;;
+      --)
+        ;;
+      *)
+        KLMS_ENTRY_CONFIG_ARG="$arg"
+        ;;
+    esac
+  done
+  export KLMS_DRY_RUN
+}
+
 klms_configure_python_runtime() {
   local python_bin="${KLMS_PYTHON_BIN:-}"
   local python_packages_dir="${KLMS_PYTHONPATH_DIR:-$RUNTIME_DIR/python-packages}"
@@ -431,6 +453,7 @@ klms_require_login() {
 
 klms_run_sync_scope() {
   local scope="$1"
+  shift || true
   local extra_args=()
   if [[ "${KLMS_LOGIN_PREFETCH_READY:-0}" == "1" ]]; then
     extra_args+=("--use-prefetched-dashboard")
@@ -440,17 +463,19 @@ klms_run_sync_scope() {
     "$KLMS_JS_DIR/sync_klms_notes.js" \
     "$CONFIG_PATH" \
     "--scope=$scope" \
-    "${extra_args[@]}"
+    "${extra_args[@]}" \
+    "$@"
 }
 
 klms_run_sync_scope_entrypoint() {
   local scope="$1"
+  shift || true
   local sync_output
 
   klms_acquire_shared_sync_lock
   trap 'klms_release_shared_sync_lock' EXIT
   klms_require_login
-  sync_output="$(klms_run_sync_scope "$scope")"
+  sync_output="$(klms_run_sync_scope "$scope" "$@")"
   print -r -- "$sync_output"
   if [[ "$sync_output" != status=ok* ]]; then
     return 1
@@ -480,6 +505,7 @@ klms_prepare_prefetched_dashboard_for_namespaces() {
 klms_run_serial_child_job() {
   local job_name="$1"
   local script_path="$2"
+  shift 2
   local started_epoch
   local finished_epoch
   local job_status=0
@@ -495,7 +521,7 @@ klms_run_serial_child_job() {
       KLMS_SHARED_COURSE_PAGES_JSON="$KLMS_SHARED_COURSE_PAGES_JSON" \
       KLMS_SHARED_ALL_WEEK_COURSE_PAGES_JSON="$KLMS_SHARED_ALL_WEEK_COURSE_PAGES_JSON" \
       KLMS_SHARED_SUPPLEMENTAL_PRIMARY_PAGES_JSON="$KLMS_SHARED_SUPPLEMENTAL_PRIMARY_PAGES_JSON" \
-      /bin/zsh "$script_path" "$CONFIG_PATH"
+      /bin/zsh "$script_path" "$CONFIG_PATH" "$@"
   ) || job_status=$?
   finished_epoch="$(date +%s)"
   print -r -- "== $job_name finish $(date '+%Y-%m-%d %H:%M:%S %Z') status=$job_status duration_s=$((finished_epoch - started_epoch)) =="

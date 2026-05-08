@@ -64,6 +64,7 @@ Example Course/resources/Week 1 Notes.pdf
 - 현재 정리본, Downloads mirror, 이전 다운로드 로그가 가리키는 예전 경로를 먼저 재사용한다.
 - 세 위치에 없을 때만 Safari를 열어 실제 다운로드를 시도한다.
 - 실행이 끝나면 `course_files`와 `~/Downloads/KLMS Files` 모두 manifest 기준으로 prune한다.
+- prune 전 삭제 후보는 `runtime/cache/prune_backups/`에 JSON으로 남긴다.
 - archive prune 결과는 `runtime/cache/course_file_archive_prune_result.json`에 남긴다.
 - manifest가 비정상적으로 줄어든 상태에서는 바로 prune하지 않고 full rebuild를 한 번 재시도한다.
 - 기존 파일이 있어도 전부 다시 받으려면 `FILE_FORCE_DOWNLOAD=1`을 설정한다.

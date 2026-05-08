@@ -37,6 +37,8 @@ cp examples/config.env.example config.env
 | `./run_all_parallel.sh` | 로그인 preflight 뒤 세 작업 병렬 실행 |
 | `./sync_klms_all.sh` | 대화형/generic sync wrapper |
 | `./verify_sync_state.sh` | 공지, 파일, 캘린더 상태 검증 |
+| `./doctor.sh` | 실행 환경, 권한, cache/file 상태 점검 |
+| `./sync_report.sh` | 마지막 실행 결과와 병목 요약 |
 | `./install_launch_agent.sh` | 자동 실행용 LaunchAgent 설치 |
 | `./kaikey_setup.sh` | Kaikey 기기키 등록 |
 | `./kaikey_auto_login.sh` | Safari SSO 로그인 보조 |
@@ -83,6 +85,9 @@ node --check src/js/export_panopto_transcripts.js
 
 ```sh
 ./verify_sync_state.sh
+./verify_sync_state.sh --json
+./doctor.sh
+./sync_report.sh
 ```
 
 ## 보안

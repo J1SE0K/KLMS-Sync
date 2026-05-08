@@ -99,6 +99,9 @@ cd ~/Library/Application\ Support/KLMSNotesSync
 
 ```sh
 ./verify_sync_state.sh
+./verify_sync_state.sh --json
+./doctor.sh
+./sync_report.sh
 ```
 
 이 검증은 다음을 함께 확인한다.
@@ -109,3 +112,5 @@ cd ~/Library/Application\ Support/KLMSNotesSync
 - 예전 `KLMS 과제`, `KLMS 알림` 캘린더가 남아 있는지
 
 병목 후보는 `runtime/cache/{core,notice,files}/stage_timings.json`의 `slowest_stages`, `slowest_events`를 본다. `SYNC_COMMAND_TIMING_ENABLED=1`이면 하위 명령의 시작/종료/소요 시간도 `events`에 남는다.
+
+변경 예정 사항만 보고 싶으면 각 entrypoint에 `--dry-run`을 붙인다. dry-run은 side effect를 건너뛰고 `runtime/cache/<scope>/dry_run_report.json`에 요약을 남긴다.

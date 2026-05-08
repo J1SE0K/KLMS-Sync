@@ -14,6 +14,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--manifest-json", required=True)
     parser.add_argument("--root", required=True)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--backup-manifest")
     return parser
 
 
@@ -36,6 +37,7 @@ def main() -> int:
     }
 
     deleted_files: list[str] = []
+    deleted_file_entries: list[dict[str, Any]] = []
     actual_files_before = 0
 
     for path in sorted(root.rglob("*")):
@@ -48,6 +50,18 @@ def main() -> int:
         if canonical_relative_path(relative_path) in tracked_paths:
             continue
         deleted_files.append(relative_path)
+        try:
+            stat = path.stat()
+            deleted_file_entries.append(
+                {
+                    "relative_path": relative_path,
+                    "absolute_path": str(path),
+                    "size": stat.st_size,
+                    "mtime": stat.st_mtime,
+                }
+            )
+        except OSError:
+            deleted_file_entries.append({"relative_path": relative_path, "absolute_path": str(path)})
         if not args.dry_run:
             path.unlink()
 
@@ -71,6 +85,20 @@ def main() -> int:
         if path.is_file() and path.relative_to(root).as_posix() != "README.md"
     )
 
+    backup_manifest_path = ""
+    if args.backup_manifest:
+        backup_path = Path(args.backup_manifest)
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        backup_payload = {
+            "manifest_path": str(manifest_path.resolve()),
+            "root": str(root),
+            "dry_run": args.dry_run,
+            "deleted_file_count": len(deleted_files),
+            "deleted_files": deleted_file_entries,
+        }
+        backup_path.write_text(json.dumps(backup_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        backup_manifest_path = str(backup_path)
+
     payload: dict[str, Any] = {
         "manifest_path": str(manifest_path.resolve()),
         "root": str(root),
@@ -79,6 +107,7 @@ def main() -> int:
         "actual_files_after": actual_files_after,
         "deleted_files": deleted_files,
         "deleted_file_count": len(deleted_files),
+        "backup_manifest_path": backup_manifest_path,
         "deleted_dirs": deleted_dirs,
         "deleted_dir_count": len(deleted_dirs),
         "dry_run": args.dry_run,

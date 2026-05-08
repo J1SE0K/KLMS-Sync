@@ -27,5 +27,10 @@
       }
     ],
     "Another Course": "화/목 14:30-16:00"
+  },
+  "notice_filters": {
+    "ignored_courses": ["Example Hidden Course"],
+    "ignored_keywords": ["채용", "설문"],
+    "important_keywords": ["시험", "휴강", "보강"]
   }
 }

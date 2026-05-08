@@ -5,6 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CONFIG_PATH="$SCRIPT_DIR/config.env"
 MODE=""
+EXTRA_ARGS=()
 
 usage() {
   cat <<'EOF'
@@ -16,6 +17,7 @@ Modes:
   --notice  Run only the notice sync
   --files   Run only the course file refresh
   --full    Run the full sync (core + notice + files)
+  --dry-run Pass dry-run through to the selected sync
 EOF
 }
 
@@ -39,6 +41,10 @@ while (( $# > 0 )); do
       ;;
     --full)
       MODE="full"
+      shift
+      ;;
+    --dry-run)
+      EXTRA_ARGS+=("--dry-run")
       shift
       ;;
     --help|-h)
@@ -104,19 +110,19 @@ EOF
 dispatch() {
   case "$MODE" in
     basic)
-      exec /bin/zsh "$SCRIPT_DIR/run_all.sh" "$CONFIG_PATH"
+      exec /bin/zsh "$SCRIPT_DIR/run_all.sh" "$CONFIG_PATH" "${EXTRA_ARGS[@]}"
       ;;
     core)
-      exec /bin/zsh "$SCRIPT_DIR/sync_klms_core.sh" "$CONFIG_PATH"
+      exec /bin/zsh "$SCRIPT_DIR/sync_klms_core.sh" "$CONFIG_PATH" "${EXTRA_ARGS[@]}"
       ;;
     notice)
-      exec /bin/zsh "$SCRIPT_DIR/sync_klms_notice.sh" "$CONFIG_PATH"
+      exec /bin/zsh "$SCRIPT_DIR/sync_klms_notice.sh" "$CONFIG_PATH" "${EXTRA_ARGS[@]}"
       ;;
     files)
-      exec /bin/zsh "$SCRIPT_DIR/refresh_course_files.sh" "$CONFIG_PATH"
+      exec /bin/zsh "$SCRIPT_DIR/refresh_course_files.sh" "$CONFIG_PATH" "${EXTRA_ARGS[@]}"
       ;;
     full)
-      exec /bin/zsh "$SCRIPT_DIR/run_all_full.sh" "$CONFIG_PATH"
+      exec /bin/zsh "$SCRIPT_DIR/run_all_full.sh" "$CONFIG_PATH" "${EXTRA_ARGS[@]}"
       ;;
     *)
       print -r -- "Unknown sync mode: ${MODE:-<empty>}" >&2

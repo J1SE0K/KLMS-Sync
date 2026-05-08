@@ -209,6 +209,8 @@ def build_parser() -> argparse.ArgumentParser:
     notice_digest_parser.add_argument("--notice-article-pages-json")
     notice_digest_parser.add_argument("--notice-summary-state-json")
     notice_digest_parser.add_argument("--course-file-manifest-json")
+    notice_digest_parser.add_argument("--overrides-json")
+    notice_digest_parser.add_argument("--auto-important-keywords-apply", action="store_true")
     notice_digest_parser.add_argument("--output-notice-summary-state-json", required=True)
     notice_digest_parser.add_argument("--output-notice-digest-json", required=True)
     notice_digest_parser.set_defaults(func=cmd_build_notice_digest)
@@ -346,11 +348,16 @@ def cmd_build_notice_digest(args: argparse.Namespace) -> None:
         if args.course_file_manifest_json and Path(args.course_file_manifest_json).exists()
         else []
     )
+    override_document = load_override_document(Path(args.overrides_json)) if args.overrides_json else {
+        "notice_filters": {}
+    }
     next_notice_summary_state, notice_digest_json = build_notice_digest(
         notice_board_state,
         notice_article_pages,
         previous_notice_summary_state,
         course_file_manifest,
+        override_document.get("notice_filters", {}),
+        args.auto_important_keywords_apply,
     )
     write_json(Path(args.output_notice_summary_state_json), next_notice_summary_state)
     write_json(Path(args.output_notice_digest_json), notice_digest_json)
@@ -597,7 +604,7 @@ def build_notice_digest_candidate_pages(notice_digest: dict[str, Any]) -> list[d
 
 def load_override_document(path: Path) -> dict[str, Any]:
     if not path.exists():
-        return {"assignments": {}, "exams": {}, "class_times": {}}
+        return {"assignments": {}, "exams": {}, "class_times": {}, "notice_filters": {}}
 
     payload = json.loads(path.read_text(encoding="utf-8"))
     if isinstance(payload, dict):
@@ -606,12 +613,29 @@ def load_override_document(path: Path) -> dict[str, Any]:
                 "assignments": normalize_assignment_overrides(payload.get("assignments")),
                 "exams": normalize_exam_overrides(payload.get("exams")),
                 "class_times": normalize_class_time_overrides(payload.get("class_times")),
+                "notice_filters": normalize_notice_filters(payload.get("notice_filters")),
             }
         return {
             "assignments": normalize_assignment_overrides(payload),
             "exams": {},
             "class_times": {},
+            "notice_filters": {},
         }
+
+
+def normalize_notice_filters(payload: Any) -> dict[str, list[str]]:
+    if not isinstance(payload, dict):
+        return {"ignored_courses": [], "ignored_keywords": [], "important_keywords": []}
+    result: dict[str, list[str]] = {}
+    for key in ("ignored_courses", "ignored_keywords", "important_keywords"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            result[key] = [str(item).strip() for item in value if str(item).strip()]
+        elif isinstance(value, str) and value.strip():
+            result[key] = [value.strip()]
+        else:
+            result[key] = []
+    return result
 
     return {"assignments": {}, "exams": {}, "class_times": {}}
 
@@ -1407,6 +1431,8 @@ def build_notice_digest(
     notice_article_pages: list[dict[str, Any]],
     previous_notice_summary_state: dict[str, Any] | None = None,
     course_file_manifest: list[dict[str, Any]] | None = None,
+    notice_filters: dict[str, list[str]] | None = None,
+    auto_important_keywords_apply: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     previous_notice_summary_state = (
         previous_notice_summary_state
@@ -1424,6 +1450,8 @@ def build_notice_digest(
     attachment_lookup = build_notice_attachment_lookup(course_file_manifest or [])
     next_articles: dict[str, dict[str, Any]] = {}
     current_entries: list[dict[str, Any]] = []
+    ignored_entries: list[dict[str, Any]] = []
+    important_candidate_urls: list[str] = []
     new_urls: list[str] = []
     updated_urls: list[str] = []
 
@@ -1451,6 +1479,17 @@ def build_notice_digest(
             else:
                 entry = build_notice_article_placeholder(meta, course, board_title)
             entry = attach_notice_file_locations(entry, attachment_lookup)
+            ignored_reason = notice_ignored_reason(entry, notice_filters or {})
+            if ignored_reason:
+                entry["ignored_reason"] = ignored_reason
+                next_articles[url] = entry
+                ignored_entries.append(entry)
+                continue
+            if notice_matches_keywords(entry, (notice_filters or {}).get("important_keywords", [])):
+                entry["important_candidate"] = True
+                important_candidate_urls.append(url)
+                if auto_important_keywords_apply:
+                    entry["auto_important"] = True
             change_state = "stable"
             if not previous_entry:
                 change_state = "new"
@@ -1476,8 +1515,11 @@ def build_notice_digest(
         "notice_count": len(current_entries),
         "new_count": len(new_urls),
         "updated_count": len(updated_urls),
+        "ignored_notice_count": len(ignored_entries),
+        "important_candidate_count": len(important_candidate_urls),
         "new_urls": new_urls,
         "updated_urls": updated_urls,
+        "important_candidate_urls": important_candidate_urls,
         "courses": [
             {
                 "course": course,
@@ -1492,6 +1534,31 @@ def build_notice_digest(
         "articles": next_articles,
     }
     return next_notice_summary_state, notice_digest_json
+
+
+def notice_filter_text(entry: dict[str, Any]) -> str:
+    return " ".join(
+        str(entry.get(key, ""))
+        for key in ("course", "title", "summary", "body_text", "excerpt")
+    ).casefold()
+
+
+def notice_matches_keywords(entry: dict[str, Any], keywords: list[str]) -> bool:
+    if not keywords:
+        return False
+    text = notice_filter_text(entry)
+    return any(keyword.casefold() in text for keyword in keywords if keyword)
+
+
+def notice_ignored_reason(entry: dict[str, Any], filters: dict[str, list[str]]) -> str:
+    course = str(entry.get("course", "")).casefold()
+    for ignored_course in filters.get("ignored_courses", []):
+        if ignored_course.casefold() and ignored_course.casefold() in course:
+            return f"ignored_course:{ignored_course}"
+    for keyword in filters.get("ignored_keywords", []):
+        if keyword.casefold() and keyword.casefold() in notice_filter_text(entry):
+            return f"ignored_keyword:{keyword}"
+    return ""
 
 
 def build_notice_attachment_lookup(

@@ -45,6 +45,8 @@ class PruneCourseFilesTests(unittest.TestCase):
                     "--root",
                     str(root),
                     "--dry-run",
+                    "--backup-manifest",
+                    str(tmp_path / "dry-backup.json"),
                 ],
                 check=True,
                 capture_output=True,
@@ -52,8 +54,11 @@ class PruneCourseFilesTests(unittest.TestCase):
             )
             dry_payload = json.loads(dry_run.stdout)
             self.assertEqual(dry_payload["deleted_file_count"], 2)
+            self.assertEqual(dry_payload["backup_manifest_path"], str(tmp_path / "dry-backup.json"))
             self.assertTrue(stale_file.exists())
             self.assertTrue(ds_store.exists())
+            dry_backup = json.loads((tmp_path / "dry-backup.json").read_text(encoding="utf-8"))
+            self.assertEqual(dry_backup["deleted_file_count"], 2)
 
             applied = subprocess.run(
                 [
@@ -63,6 +68,8 @@ class PruneCourseFilesTests(unittest.TestCase):
                     str(manifest_path),
                     "--root",
                     str(root),
+                    "--backup-manifest",
+                    str(tmp_path / "apply-backup.json"),
                 ],
                 check=True,
                 capture_output=True,
@@ -71,6 +78,7 @@ class PruneCourseFilesTests(unittest.TestCase):
             applied_payload = json.loads(applied.stdout)
 
             self.assertEqual(applied_payload["actual_files_after"], 1)
+            self.assertEqual(applied_payload["backup_manifest_path"], str(tmp_path / "apply-backup.json"))
             self.assertTrue(tracked_file.exists())
             self.assertFalse(stale_file.exists())
             self.assertFalse(ds_store.exists())

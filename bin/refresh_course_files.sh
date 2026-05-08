@@ -6,7 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 COMMON_SH="$SCRIPT_DIR/src/sh/klms_common.sh"
 source "$COMMON_SH"
 
-klms_init_context "$SCRIPT_DIR/refresh_course_files.sh" "${1:-}"
+klms_parse_entry_args "$@"
+klms_init_context "$SCRIPT_DIR/refresh_course_files.sh" "$KLMS_ENTRY_CONFIG_ARG"
 klms_acquire_shared_sync_lock
 trap 'klms_release_shared_sync_lock' EXIT
 
@@ -31,6 +32,9 @@ FILE_NESTED2_STALE_SECONDS="${FILE_NESTED2_STALE_SECONDS:-86400}"
 FILE_NESTED_BACKGROUND_QUICK_LIMIT_RAW="${FILE_NESTED_BACKGROUND_QUICK_LIMIT:-}"
 FILE_NESTED2_BACKGROUND_QUICK_LIMIT_RAW="${FILE_NESTED2_BACKGROUND_QUICK_LIMIT:-}"
 FILE_KEEP_FRESH_DOWNLOADS="${FILE_KEEP_FRESH_DOWNLOADS:-1}"
+FILE_DRY_RUN="${KLMS_DRY_RUN:-0}"
+FILE_PRUNE_BACKUP_ENABLED="${FILE_PRUNE_BACKUP_ENABLED:-1}"
+FILE_PRUNE_BACKUP_KEEP="${FILE_PRUNE_BACKUP_KEEP:-20}"
 FILE_WEEKLY_FOLDERS_ENABLED_RAW="${FILE_WEEKLY_FOLDERS_ENABLED:-1}"
 case "${FILE_WEEKLY_FOLDERS_ENABLED_RAW:l}" in
   1|true|yes|on)
@@ -72,7 +76,9 @@ DOWNLOAD_LOG_JSON="$CACHE_DIR/course_file_download_log.json"
 DOWNLOAD_RESULT_JSON="$CACHE_DIR/course_file_download_result.json"
 PRUNE_RESULT_JSON="$CACHE_DIR/course_file_prune_result.json"
 ARCHIVE_PRUNE_RESULT_JSON="$CACHE_DIR/course_file_archive_prune_result.json"
+PRUNE_BACKUP_DIR="$CACHE_DIR/prune_backups"
 CLEANUP_RESULT_JSON="$CACHE_DIR/course_file_cleanup_result.json"
+DRY_RUN_REPORT_JSON="$WORK_CACHE_DIR/dry_run_report.json"
 SYNC_PREVIEW_JSON="$CACHE_DIR/course_file_sync_preview.json"
 QUARANTINE_REPORT_JSON="$CACHE_DIR/course_file_quarantine_report.json"
 FILE_SEED_FETCH_SUMMARY_JSON="$WORK_CACHE_DIR/file_seed_fetch_summary.json"
@@ -89,7 +95,7 @@ SHARED_SUPPLEMENTAL_SECONDARY_PAGES_JSON="${KLMS_SHARED_SUPPLEMENTAL_SECONDARY_P
 SHARED_SUPPLEMENTAL_DETAIL_PAGES_JSON="${KLMS_SHARED_SUPPLEMENTAL_DETAIL_PAGES_JSON:-$CACHE_DIR/core/supplemental_detail_pages.json}"
 SHARED_DETAIL_PAGES_JSON="${KLMS_SHARED_DETAIL_PAGES_JSON:-$CACHE_DIR/core/details.json}"
 
-mkdir -p "$CACHE_DIR" "$WORK_CACHE_DIR" "$TMP_DIR"
+mkdir -p "$CACHE_DIR" "$WORK_CACHE_DIR" "$TMP_DIR" "$PRUNE_BACKUP_DIR"
 FILES_TIMING_LOG="$WORK_CACHE_DIR/stage_timings.log"
 : > "$FILES_TIMING_LOG"
 
@@ -554,7 +560,7 @@ build_linked_html_index() {
 }
 
 cd "$SCRIPT_DIR"
-log_files_timing "refresh start output_root=$OUTPUT_ROOT mode=$FILE_REFRESH_MODE force_download=$FILE_FORCE_DOWNLOAD weekly_folders=$FILE_WEEKLY_FOLDERS_ENABLED"
+log_files_timing "refresh start output_root=$OUTPUT_ROOT mode=$FILE_REFRESH_MODE force_download=$FILE_FORCE_DOWNLOAD weekly_folders=$FILE_WEEKLY_FOLDERS_ENABLED dry_run=$FILE_DRY_RUN"
 
 PREVIOUS_MANIFEST_COUNT="$(count_manifest_entries "$MANIFEST_JSON")"
 EXISTING_TRACKED_FILE_COUNT="$(count_tracked_output_files "$OUTPUT_ROOT")"
@@ -810,7 +816,11 @@ PY
     export KLMS_USE_EXISTING_DASHBOARD=1
     export FILE_REFRESH_MODE=full
     export FILE_REFRESH_RECOVERY_REBUILD=1
-    exec /bin/zsh "$0" "$CONFIG_PATH"
+    if is_truthy "$FILE_DRY_RUN"; then
+      exec /bin/zsh "$0" "$CONFIG_PATH" --dry-run
+    else
+      exec /bin/zsh "$0" "$CONFIG_PATH"
+    fi
   fi
 fi
 
@@ -858,9 +868,29 @@ report_path.parent.mkdir(parents=True, exist_ok=True)
 report_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 PY
 
-log_files_timing "download start force_download=$FILE_FORCE_DOWNLOAD"
+log_files_timing "download start force_download=$FILE_FORCE_DOWNLOAD dry_run=$FILE_DRY_RUN"
 download_started_epoch="$(date +%s)"
-if ! is_truthy "$FILE_FORCE_DOWNLOAD" \
+if is_truthy "$FILE_DRY_RUN"; then
+  python3 - "$MANIFEST_JSON" "$DOWNLOAD_RESULT_JSON" "$OUTPUT_ROOT" "$DOWNLOAD_ARCHIVE_ROOT" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")) if Path(sys.argv[1]).exists() else []
+payload = {
+    "manifestPath": str(Path(sys.argv[1]).resolve()),
+    "outputRoot": str(Path(sys.argv[3]).resolve()),
+    "downloadsRoot": str(Path(sys.argv[4]).expanduser().resolve()),
+    "fileCount": len(manifest) if isinstance(manifest, list) else 0,
+    "newFilesCopiedCount": 0,
+    "quarantineCount": 0,
+    "results": [],
+    "dry_run": True,
+}
+Path(sys.argv[2]).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
+  log_files_timing "download skipped dry_run=1 duration_s=$(($(date +%s) - download_started_epoch))"
+elif ! is_truthy "$FILE_FORCE_DOWNLOAD" \
   && write_existing_download_result_if_complete \
     "$MANIFEST_JSON" \
     "$OUTPUT_ROOT" \
@@ -905,9 +935,22 @@ fi
 
 log_files_timing "prune start"
 prune_started_epoch="$(date +%s)"
+prune_backup_args=()
+archive_prune_backup_args=()
+prune_timestamp="$(date +%Y%m%d-%H%M%S)"
+if is_truthy "$FILE_PRUNE_BACKUP_ENABLED"; then
+  prune_backup_args=(--backup-manifest "$PRUNE_BACKUP_DIR/${prune_timestamp}_course_files.json")
+  archive_prune_backup_args=(--backup-manifest "$PRUNE_BACKUP_DIR/${prune_timestamp}_archive.json")
+fi
+prune_dry_run_args=()
+if is_truthy "$FILE_DRY_RUN"; then
+  prune_dry_run_args=(--dry-run)
+fi
 python3 "$KLMS_PYTHON_DIR/prune_course_files.py" \
   --manifest-json "$MANIFEST_JSON" \
   --root "$OUTPUT_ROOT" \
+  "${prune_backup_args[@]}" \
+  "${prune_dry_run_args[@]}" \
   > "$PRUNE_RESULT_JSON"
 log_files_timing "prune finish duration_s=$(($(date +%s) - prune_started_epoch))"
 
@@ -916,8 +959,23 @@ archive_prune_started_epoch="$(date +%s)"
 python3 "$KLMS_PYTHON_DIR/prune_course_files.py" \
   --manifest-json "$MANIFEST_JSON" \
   --root "$DOWNLOAD_ARCHIVE_ROOT" \
+  "${archive_prune_backup_args[@]}" \
+  "${prune_dry_run_args[@]}" \
   > "$ARCHIVE_PRUNE_RESULT_JSON"
 log_files_timing "archive prune finish duration_s=$(($(date +%s) - archive_prune_started_epoch))"
+
+if is_truthy "$FILE_PRUNE_BACKUP_ENABLED"; then
+  python3 - "$PRUNE_BACKUP_DIR" "$FILE_PRUNE_BACKUP_KEEP" <<'PY'
+import sys
+from pathlib import Path
+
+backup_dir = Path(sys.argv[1])
+keep = max(0, int(sys.argv[2]))
+files = sorted(backup_dir.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+for path in files[keep:]:
+    path.unlink()
+PY
+fi
 
 cleanup_args=(
   /usr/bin/osascript
@@ -932,9 +990,13 @@ case "${FILE_KEEP_FRESH_DOWNLOADS:l}" in
     cleanup_args+=("--keep-fresh-downloads")
     ;;
 esac
-log_files_timing "cleanup start keep_fresh=$FILE_KEEP_FRESH_DOWNLOADS"
+log_files_timing "cleanup start keep_fresh=$FILE_KEEP_FRESH_DOWNLOADS dry_run=$FILE_DRY_RUN"
 cleanup_started_epoch="$(date +%s)"
-"${cleanup_args[@]}" > "$CLEANUP_RESULT_JSON"
+if is_truthy "$FILE_DRY_RUN"; then
+  printf '{"dry_run": true, "actions": []}\n' > "$CLEANUP_RESULT_JSON"
+else
+  "${cleanup_args[@]}" > "$CLEANUP_RESULT_JSON"
+fi
 log_files_timing "cleanup finish duration_s=$(($(date +%s) - cleanup_started_epoch))"
 
 python3 - "$DOWNLOAD_RESULT_JSON" "$PRUNE_RESULT_JSON" "$ARCHIVE_PRUNE_RESULT_JSON" "$CLEANUP_RESULT_JSON" <<'PY'
@@ -996,5 +1058,30 @@ print(
     f"already_missing={already_missing}"
 )
 PY
+if is_truthy "$FILE_DRY_RUN"; then
+  python3 - "$DOWNLOAD_RESULT_JSON" "$PRUNE_RESULT_JSON" "$ARCHIVE_PRUNE_RESULT_JSON" "$DRY_RUN_REPORT_JSON" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+download = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+prune = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+archive_prune = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
+payload = {
+    "dry_run": True,
+    "scope": "files",
+    "would_create": 0,
+    "would_update": 0,
+    "would_delete": int(prune.get("deleted_file_count", 0) or 0) + int(archive_prune.get("deleted_file_count", 0) or 0),
+    "would_download": int(download.get("fileCount", 0) or 0),
+    "would_prune": int(prune.get("deleted_file_count", 0) or 0),
+    "skipped_side_effects": ["download", "copy", "prune-delete", "downloads-cleanup"],
+    "prune_backup_manifest": prune.get("backup_manifest_path", ""),
+    "archive_prune_backup_manifest": archive_prune.get("backup_manifest_path", ""),
+}
+Path(sys.argv[4]).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+print(f"dry-run-report path={sys.argv[4]} would_download={payload['would_download']} would_delete={payload['would_delete']}")
+PY
+fi
 klms_cleanup_runtime_tmp_if_enabled
 log_files_timing "refresh finish"

@@ -53,6 +53,7 @@ exec /bin/zsh "$SCRIPT_DIR/bin/<script>.sh" "$@"
 | `~/Library/Application Support/KLMSNotesSync` | LaunchAgent 설치본, 인증 state, 자동 실행 runtime |
 
 `runtime/cache/*/stage_timings.json`에는 stage별 소요 시간과 병목 후보가 남는다. `verify_sync_state.sh`는 canonical cache/state와 Apple Calendar를 함께 확인한다.
+`doctor.sh`와 `sync_report.sh`는 각각 `runtime/cache/doctor_result.json`, `runtime/cache/sync_report.json`을 생성한다.
 
 ## Installed Copy
 

@@ -29,6 +29,8 @@ class ShellEntrypointCleanupTests(unittest.TestCase):
             "run_all_full.sh",
             "run_all_parallel.sh",
             "verify_sync_state.sh",
+            "doctor.sh",
+            "sync_report.sh",
             "kaikey_auto_login.sh",
             "kaikey_setup.sh",
             "kaikey_approve_number.sh",
@@ -84,6 +86,8 @@ class ShellEntrypointCleanupTests(unittest.TestCase):
         self.assertIn('ARCHIVE_PRUNE_RESULT_JSON="$CACHE_DIR/course_file_archive_prune_result.json"', text)
         self.assertIn('--root "$DOWNLOAD_ARCHIVE_ROOT"', text)
         self.assertIn("archive-prune-summary", text)
+        self.assertIn("--backup-manifest", text)
+        self.assertIn("--dry-run", text)
         self.assertIn("--preserve-destinations", text)
         self.assertIn("klms_cleanup_runtime_tmp_if_enabled", text)
 
@@ -102,15 +106,29 @@ class ShellEntrypointCleanupTests(unittest.TestCase):
         self.assertIn('mkdir -p "$INSTALL_DIR/src" "$INSTALL_DIR/bin"', text)
         self.assertIn('cp -R "$SCRIPT_DIR/bin/." "$INSTALL_DIR/bin/"', text)
         self.assertIn('find "$INSTALL_DIR/bin" -type f -name', text)
+        self.assertIn('cp "$SCRIPT_DIR/doctor.sh" "$INSTALL_DIR/"', text)
+        self.assertIn('cp "$SCRIPT_DIR/sync_report.sh" "$INSTALL_DIR/"', text)
 
     def test_verify_sync_state_uses_swift_calendar_counts(self) -> None:
         text = (PROJECT_DIR / "bin" / "verify_sync_state.sh").read_text(encoding="utf-8")
 
         self.assertIn("src/swift/verify_calendar_counts.swift", text)
+        self.assertIn("verify_sync_state.py", text)
         self.assertIn("--exam-calendar=", text)
         self.assertIn("--helpdesk-calendar=", text)
         self.assertNotIn("osascript -l JavaScript", text)
         self.assertNotIn("summary of every event of calendar", text)
+
+    def test_calendar_sync_uses_repo_swift_module_cache_and_opt_in_fallback(self) -> None:
+        text = (PROJECT_DIR / "src" / "js" / "sync_klms_notes.js").read_text(encoding="utf-8")
+        config = (PROJECT_DIR / "examples" / "config.env.example").read_text(encoding="utf-8")
+
+        self.assertIn("SWIFT_MODULE_CACHE_PATH=", text)
+        self.assertIn("CLANG_MODULE_CACHE_PATH=", text)
+        self.assertIn("-module-cache-path", text)
+        self.assertIn('config.CALENDAR_SYNC_APPLESCRIPT_FALLBACK !== "1"', text)
+        self.assertIn("deprecated-calendar-jxa-fallback", text)
+        self.assertIn('CALENDAR_SYNC_APPLESCRIPT_FALLBACK="0"', config)
 
 
 if __name__ == "__main__":
