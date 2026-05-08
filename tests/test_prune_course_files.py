@@ -84,6 +84,52 @@ class PruneCourseFilesTests(unittest.TestCase):
             self.assertFalse(ds_store.exists())
             self.assertFalse(stale_file.parent.exists())
 
+    def test_prune_can_use_preview_effective_tracked_paths(self) -> None:
+        script = PROJECT_DIR / "src" / "python" / "prune_course_files.py"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            root = tmp_path / "course_files"
+            old_named_file = root / "Course" / "resources" / "slides.pdf"
+            old_named_file.parent.mkdir(parents=True)
+            old_named_file.write_text("tracked by previous download log", encoding="utf-8")
+
+            manifest_path = tmp_path / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "relative_path": "Course/resources/slides final.pdf",
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            preview_path = tmp_path / "preview.json"
+            preview_path.write_text(
+                json.dumps({"tracked_relative_paths": ["Course/resources/slides.pdf"]}),
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--manifest-json",
+                    str(manifest_path),
+                    "--root",
+                    str(root),
+                    "--dry-run",
+                    "--tracked-relative-paths-json",
+                    str(preview_path),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["deleted_file_count"], 0)
+            self.assertTrue(old_named_file.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

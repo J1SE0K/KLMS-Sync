@@ -40,7 +40,7 @@ def main_with_args(argv: list[str] | None = None) -> int:
 
     actual_files = current_output_files(output_root)
 
-    tracked_paths: set[str] = set()
+    tracked_paths: dict[str, str] = {}
     new_url_entries: list[dict[str, Any]] = []
     moved_entries: list[dict[str, Any]] = []
     fresh_download_candidates: list[dict[str, Any]] = []
@@ -55,7 +55,7 @@ def main_with_args(argv: list[str] | None = None) -> int:
         previous = previous_by_url.get(url) if url else None
         effective_relative_path = effective_entry_relative_path(item, previous)
         if effective_relative_path:
-            tracked_paths.add(canonical_relative_path(effective_relative_path))
+            tracked_paths[canonical_relative_path(effective_relative_path)] = effective_relative_path
 
         if url and previous is None:
             new_url_entries.append(compact_entry(item, effective_relative_path))
@@ -119,6 +119,7 @@ def main_with_args(argv: list[str] | None = None) -> int:
         "fresh_download_candidate_count": len(fresh_download_candidates),
         "prune_candidate_count": len(prune_candidates),
         "type_mismatch_candidate_count": len(type_mismatch_candidates),
+        "tracked_relative_paths": sorted(tracked_paths.values()),
         "new_url_entries": new_url_entries,
         "moved_entries": moved_entries,
         "fresh_download_candidates": fresh_download_candidates,

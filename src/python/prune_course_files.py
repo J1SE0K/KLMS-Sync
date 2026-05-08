@@ -15,6 +15,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--root", required=True)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--backup-manifest")
+    parser.add_argument("--tracked-relative-paths-json")
     return parser
 
 
@@ -30,11 +31,7 @@ def main() -> int:
     if not isinstance(manifest, list):
         raise SystemExit(f"Manifest must be a JSON array: {manifest_path}")
 
-    tracked_paths = {
-        canonical_relative_path(Path(str(item["relative_path"])).as_posix())
-        for item in manifest
-        if isinstance(item, dict) and item.get("relative_path")
-    }
+    tracked_paths = load_tracked_paths(args, manifest)
 
     deleted_files: list[str] = []
     deleted_file_entries: list[dict[str, Any]] = []
@@ -114,6 +111,26 @@ def main() -> int:
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
+
+
+def load_tracked_paths(args: argparse.Namespace, manifest: list[Any]) -> set[str]:
+    if args.tracked_relative_paths_json:
+        preview_path = Path(args.tracked_relative_paths_json)
+        preview = json.loads(preview_path.read_text(encoding="utf-8"))
+        values = preview.get("tracked_relative_paths") if isinstance(preview, dict) else None
+        if not isinstance(values, list):
+            raise SystemExit(f"tracked_relative_paths must be a list: {preview_path}")
+        return {
+            canonical_relative_path(Path(str(value)).as_posix())
+            for value in values
+            if str(value or "").strip()
+        }
+
+    return {
+        canonical_relative_path(Path(str(item["relative_path"])).as_posix())
+        for item in manifest
+        if isinstance(item, dict) and item.get("relative_path")
+    }
 
 
 if __name__ == "__main__":

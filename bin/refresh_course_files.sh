@@ -69,9 +69,12 @@ FILE_NESTED_INDEX_JSON="$WORK_CACHE_DIR/file_nested_index.json"
 FILE_NESTED2_URLS_TXT="$WORK_CACHE_DIR/file_nested_round2_urls.txt"
 FILE_NESTED2_PAGES_JSON="$WORK_CACHE_DIR/file_nested_round2_pages.json"
 FILE_NESTED2_INDEX_JSON="$WORK_CACHE_DIR/file_nested_round2_index.json"
-MANIFEST_JSON="$CACHE_DIR/course_file_manifest.json"
-MANIFEST_MD="$CACHE_DIR/course_file_manifest.md"
-MANIFEST_STATE_JSON="$CACHE_DIR/course_file_manifest_state.json"
+PERSISTENT_MANIFEST_JSON="$CACHE_DIR/course_file_manifest.json"
+PERSISTENT_MANIFEST_MD="$CACHE_DIR/course_file_manifest.md"
+PERSISTENT_MANIFEST_STATE_JSON="$CACHE_DIR/course_file_manifest_state.json"
+MANIFEST_JSON="$PERSISTENT_MANIFEST_JSON"
+MANIFEST_MD="$PERSISTENT_MANIFEST_MD"
+MANIFEST_STATE_JSON="$PERSISTENT_MANIFEST_STATE_JSON"
 DOWNLOAD_LOG_JSON="$CACHE_DIR/course_file_download_log.json"
 DOWNLOAD_RESULT_JSON="$CACHE_DIR/course_file_download_result.json"
 PRUNE_RESULT_JSON="$CACHE_DIR/course_file_prune_result.json"
@@ -95,8 +98,45 @@ SHARED_SUPPLEMENTAL_SECONDARY_PAGES_JSON="${KLMS_SHARED_SUPPLEMENTAL_SECONDARY_P
 SHARED_SUPPLEMENTAL_DETAIL_PAGES_JSON="${KLMS_SHARED_SUPPLEMENTAL_DETAIL_PAGES_JSON:-$CACHE_DIR/core/supplemental_detail_pages.json}"
 SHARED_DETAIL_PAGES_JSON="${KLMS_SHARED_DETAIL_PAGES_JSON:-$CACHE_DIR/core/details.json}"
 
+is_truthy() {
+  case "${1:-}" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if is_truthy "$FILE_DRY_RUN"; then
+  MANIFEST_JSON="$WORK_CACHE_DIR/course_file_manifest.json"
+  MANIFEST_MD="$WORK_CACHE_DIR/course_file_manifest.md"
+  MANIFEST_STATE_JSON="$WORK_CACHE_DIR/course_file_manifest_state.json"
+  DOWNLOAD_RESULT_JSON="$WORK_CACHE_DIR/course_file_download_result.json"
+  PRUNE_RESULT_JSON="$WORK_CACHE_DIR/course_file_prune_result.json"
+  ARCHIVE_PRUNE_RESULT_JSON="$WORK_CACHE_DIR/course_file_archive_prune_result.json"
+  CLEANUP_RESULT_JSON="$WORK_CACHE_DIR/course_file_cleanup_result.json"
+  SYNC_PREVIEW_JSON="$WORK_CACHE_DIR/course_file_sync_preview.json"
+  QUARANTINE_REPORT_JSON="$WORK_CACHE_DIR/course_file_quarantine_report.json"
+fi
+
 mkdir -p "$CACHE_DIR" "$WORK_CACHE_DIR" "$TMP_DIR" "$PRUNE_BACKUP_DIR"
+if is_truthy "$FILE_DRY_RUN"; then
+  if [[ -s "$PERSISTENT_MANIFEST_JSON" ]]; then
+    cp "$PERSISTENT_MANIFEST_JSON" "$MANIFEST_JSON"
+  else
+    rm -f "$MANIFEST_JSON"
+  fi
+  if [[ -s "$PERSISTENT_MANIFEST_MD" ]]; then
+    cp "$PERSISTENT_MANIFEST_MD" "$MANIFEST_MD"
+  else
+    rm -f "$MANIFEST_MD"
+  fi
+  if [[ -s "$PERSISTENT_MANIFEST_STATE_JSON" ]]; then
+    cp "$PERSISTENT_MANIFEST_STATE_JSON" "$MANIFEST_STATE_JSON"
+  else
+    rm -f "$MANIFEST_STATE_JSON"
+  fi
+fi
 FILES_TIMING_LOG="$WORK_CACHE_DIR/stage_timings.log"
+FILES_TIMING_JSON="$WORK_CACHE_DIR/stage_timings.json"
 : > "$FILES_TIMING_LOG"
 
 log_files_timing() {
@@ -105,13 +145,6 @@ log_files_timing() {
   line="[files $(date '+%Y-%m-%d %H:%M:%S %Z')] $message"
   print -r -- "$line" >> "$FILES_TIMING_LOG"
   print -r -- "$line" >&2
-}
-
-is_truthy() {
-  case "${1:-}" in
-    1|true|TRUE|yes|YES|on|ON) return 0 ;;
-    *) return 1 ;;
-  esac
 }
 
 resolve_quick_limit() {
@@ -946,10 +979,15 @@ prune_dry_run_args=()
 if is_truthy "$FILE_DRY_RUN"; then
   prune_dry_run_args=(--dry-run)
 fi
+prune_tracking_args=()
+if is_truthy "$FILE_DRY_RUN"; then
+  prune_tracking_args=(--tracked-relative-paths-json "$SYNC_PREVIEW_JSON")
+fi
 python3 "$KLMS_PYTHON_DIR/prune_course_files.py" \
   --manifest-json "$MANIFEST_JSON" \
   --root "$OUTPUT_ROOT" \
   "${prune_backup_args[@]}" \
+  "${prune_tracking_args[@]}" \
   "${prune_dry_run_args[@]}" \
   > "$PRUNE_RESULT_JSON"
 log_files_timing "prune finish duration_s=$(($(date +%s) - prune_started_epoch))"
@@ -960,6 +998,7 @@ python3 "$KLMS_PYTHON_DIR/prune_course_files.py" \
   --manifest-json "$MANIFEST_JSON" \
   --root "$DOWNLOAD_ARCHIVE_ROOT" \
   "${archive_prune_backup_args[@]}" \
+  "${prune_tracking_args[@]}" \
   "${prune_dry_run_args[@]}" \
   > "$ARCHIVE_PRUNE_RESULT_JSON"
 log_files_timing "archive prune finish duration_s=$(($(date +%s) - archive_prune_started_epoch))"
@@ -1059,29 +1098,14 @@ print(
 )
 PY
 if is_truthy "$FILE_DRY_RUN"; then
-  python3 - "$DOWNLOAD_RESULT_JSON" "$PRUNE_RESULT_JSON" "$ARCHIVE_PRUNE_RESULT_JSON" "$DRY_RUN_REPORT_JSON" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-download = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-prune = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
-archive_prune = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
-payload = {
-    "dry_run": True,
-    "scope": "files",
-    "would_create": 0,
-    "would_update": 0,
-    "would_delete": int(prune.get("deleted_file_count", 0) or 0) + int(archive_prune.get("deleted_file_count", 0) or 0),
-    "would_download": int(download.get("fileCount", 0) or 0),
-    "would_prune": int(prune.get("deleted_file_count", 0) or 0),
-    "skipped_side_effects": ["download", "copy", "prune-delete", "downloads-cleanup"],
-    "prune_backup_manifest": prune.get("backup_manifest_path", ""),
-    "archive_prune_backup_manifest": archive_prune.get("backup_manifest_path", ""),
-}
-Path(sys.argv[4]).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-print(f"dry-run-report path={sys.argv[4]} would_download={payload['would_download']} would_delete={payload['would_delete']}")
-PY
+  python3 "$KLMS_PYTHON_DIR/build_course_file_dry_run_report.py" \
+    --preview-json "$SYNC_PREVIEW_JSON" \
+    --prune-result-json "$PRUNE_RESULT_JSON" \
+    --archive-prune-result-json "$ARCHIVE_PRUNE_RESULT_JSON" \
+    --output-json "$DRY_RUN_REPORT_JSON"
 fi
 klms_cleanup_runtime_tmp_if_enabled
 log_files_timing "refresh finish"
+python3 "$KLMS_PYTHON_DIR/build_files_stage_timings.py" \
+  --log "$FILES_TIMING_LOG" \
+  --output-json "$FILES_TIMING_JSON"

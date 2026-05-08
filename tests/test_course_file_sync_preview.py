@@ -75,6 +75,7 @@ class CourseFileSyncPreviewTests(unittest.TestCase):
         self.assertEqual(payload["fresh_download_candidate_count"], 2)
         self.assertEqual(payload["prune_candidate_count"], 1)
         self.assertEqual(payload["type_mismatch_candidate_count"], 1)
+        self.assertIn("Course/slides.pptx", payload["tracked_relative_paths"])
 
     def test_preview_reuses_previous_weekly_layout_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -149,6 +150,7 @@ class CourseFileSyncPreviewTests(unittest.TestCase):
         self.assertEqual(payload["moved_count"], 2)
         self.assertEqual(payload["fresh_download_candidate_count"], 0)
         self.assertEqual(payload["prune_candidate_count"], 1)
+        self.assertIn("Course/resources/Week Notes.pdf", payload["tracked_relative_paths"])
 
 
 if __name__ == "__main__":

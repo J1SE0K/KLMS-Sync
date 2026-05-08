@@ -45,6 +45,15 @@ def calendar_command_summary(calendar_result: dict[str, Any]) -> dict[str, int]:
     return {"created": created, "updated": updated, "deleted": deleted}
 
 
+def combined_slowest_stages(*timing_payloads: dict[str, Any]) -> list[dict[str, Any]]:
+    stages: list[dict[str, Any]] = []
+    for payload in timing_payloads:
+        for item in payload.get("slowest_stages", []):
+            if isinstance(item, dict):
+                stages.append(item)
+    return sorted(stages, key=lambda item: int(item.get("duration_ms", 0) or 0), reverse=True)[:5]
+
+
 def build_report(cache_dir: Path, state_json: Path) -> dict[str, Any]:
     state = load_json(state_json, {})
     content = state.get("content", {}) if isinstance(state, dict) else {}
@@ -88,7 +97,7 @@ def build_report(cache_dir: Path, state_json: Path) -> dict[str, Any]:
             "archive_pruned": int(archive_prune.get("deleted_file_count", 0) or 0),
         },
         "calendar": calendar_command_summary(calendar_result),
-        "slowest": (core_timing.get("slowest_stages", []) + notice_timing.get("slowest_stages", []) + files_timing.get("slowest_stages", []))[:5],
+        "slowest": combined_slowest_stages(core_timing, notice_timing, files_timing),
     }
 
 

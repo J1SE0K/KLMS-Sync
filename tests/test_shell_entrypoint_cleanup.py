@@ -89,6 +89,7 @@ class ShellEntrypointCleanupTests(unittest.TestCase):
         self.assertIn("--backup-manifest", text)
         self.assertIn("--dry-run", text)
         self.assertIn("--preserve-destinations", text)
+        self.assertIn("build_files_stage_timings.py", text)
         self.assertIn("klms_cleanup_runtime_tmp_if_enabled", text)
 
     def test_cleanup_tracked_downloads_can_preserve_archive_destinations(self) -> None:
