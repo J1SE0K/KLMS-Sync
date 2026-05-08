@@ -33,10 +33,11 @@ Kaikey 자동 인증을 켜면 Mac에 저장되는 기기키가 사실상 KAIST 
 
 내부 구현은 기능과 언어별로 분리한다.
 
+- `bin/`: 루트 entrypoint wrapper가 호출하는 실제 shell 구현
 - `src/sh/`: 공통 shell helper, launchd worker, tmp cleanup, native Notes renderer wrapper
 - `src/js/`: Safari/JXA 자동화, Reminders/Notes 동기화 runner, Kaikey protocol CLI
 - `src/python/`: KLMS HTML 파서, 증분 fetch backend, 파일 manifest/prune 도구
-- `src/swift/`: Calendar 동기화, QR decode, native Notes renderer
+- `src/swift/`: Calendar 동기화/검증, QR decode, native Notes renderer
 - `examples/`: 공개 가능한 예시 설정 파일
 - `docs/`: 공개 배포 체크리스트 등 보조 문서
 - `legacy/`: 호환 wrapper와 수동 디버깅용 보조 스크립트

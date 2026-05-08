@@ -35,8 +35,9 @@ node --check src/js/kaikey_cli.mjs
 node --check src/js/sync_klms_notes.js
 node --check src/js/download_klms_files.js
 node --check src/js/export_panopto_transcripts.js
-zsh -n *.sh src/sh/*.sh
+zsh -n *.sh bin/*.sh src/sh/*.sh
 swiftc -typecheck src/swift/decode_qr_image.swift
+swiftc -typecheck src/swift/verify_calendar_counts.swift
 swiftc -typecheck src/swift/notice_native_note_support.swift src/swift/update_notice_native_note.swift
 ```
 

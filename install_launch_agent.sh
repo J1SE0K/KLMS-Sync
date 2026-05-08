@@ -19,9 +19,10 @@ GUI_DOMAIN="gui/$(id -u)"
 
 mkdir -p "$HOME/Library/LaunchAgents" "$INSTALL_DIR/runtime/logs"
 mkdir -p "$INSTALL_DIR/runtime/automation"
-mkdir -p "$INSTALL_DIR/src"
+mkdir -p "$INSTALL_DIR/src" "$INSTALL_DIR/bin"
 
 cp -R "$SCRIPT_DIR/src/." "$INSTALL_DIR/src/"
+cp -R "$SCRIPT_DIR/bin/." "$INSTALL_DIR/bin/"
 cp "$SCRIPT_DIR/kaikey_auto_login.sh" "$INSTALL_DIR/"
 cp "$SCRIPT_DIR/kaikey_approve_number.sh" "$INSTALL_DIR/"
 cp "$SCRIPT_DIR/kaikey_setup.sh" "$INSTALL_DIR/"
@@ -54,6 +55,7 @@ chmod +x \
 find "$INSTALL_DIR/src/sh" "$INSTALL_DIR/src/js" "$INSTALL_DIR/src/python" -type f \
   \( -name '*.sh' -o -name '*.js' -o -name '*.mjs' -o -name '*.py' \) \
   -exec chmod +x {} +
+find "$INSTALL_DIR/bin" -type f -name '*.sh' -exec chmod +x {} +
 
 rm -f "$INSTALL_DIR/inspect_klms_front_tab.js"
 rm -f "$INSTALL_DIR/sync_klms_alert_calendar.swift"
