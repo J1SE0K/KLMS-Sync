@@ -135,6 +135,14 @@ class CalendarExamFieldTests(unittest.TestCase):
             source = (PROJECT_DIR / relative_path).read_text(encoding="utf-8")
             self.assertIn("coverage_summary", source)
 
+    def test_calendar_suite_existing_event_lookup_is_not_nested(self) -> None:
+        source = (PROJECT_DIR / "src" / "swift" / "sync_klms_calendar_suite.swift").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("    let existingEvents = managedEvents(", source)
+        self.assertNotIn("        let existingEvents = managedEvents(", source)
+
 
 if __name__ == "__main__":
     unittest.main()

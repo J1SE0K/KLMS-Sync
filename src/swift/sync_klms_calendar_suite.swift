@@ -199,12 +199,12 @@ func syncStandardCalendar(
 
     let desiredEvents = buildDesiredStandardEvents(items: standardSyncableItems(from: content, bucket: bucket))
     let desiredByID = Dictionary(uniqueKeysWithValues: desiredEvents.map { ($0.identifier, $0) })
-        let existingEvents = managedEvents(
-            in: calendar,
-            store: store,
-            markerPrefixes: syncMarkerPrefixes,
-            lookbackDays: lookbackDays
-        )
+    let existingEvents = managedEvents(
+        in: calendar,
+        store: store,
+        markerPrefixes: syncMarkerPrefixes,
+        lookbackDays: lookbackDays
+    )
 
     var created = 0
     var updated = 0
