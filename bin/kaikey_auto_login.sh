@@ -13,11 +13,12 @@ fi
 KLMS_LOGIN_URL="${KLMS_LOGIN_URL:-${KLMS_DASHBOARD_URL:-https://klms.kaist.ac.kr/my/}}"
 KAIKEY_AUTO_LOGIN_TIMEOUT_SECONDS="${KAIKEY_AUTO_LOGIN_TIMEOUT_SECONDS:-90}"
 KAIKEY_MANUAL_APPROVAL_TIMEOUT_SECONDS="${KAIKEY_MANUAL_APPROVAL_TIMEOUT_SECONDS:-300}"
-KAIKEY_AUTO_LOGIN_POLL_SECONDS="${KAIKEY_AUTO_LOGIN_POLL_SECONDS:-1}"
+KAIKEY_AUTO_LOGIN_POLL_SECONDS="${KAIKEY_AUTO_LOGIN_POLL_SECONDS:-0.2}"
 KAIKEY_SAFARI_STEP_TIMEOUT_SECONDS="${KAIKEY_SAFARI_STEP_TIMEOUT_SECONDS:-12}"
-KAIKEY_SAFARI_STEP_POLL_MS="${KAIKEY_SAFARI_STEP_POLL_MS:-150}"
+KAIKEY_SAFARI_STEP_POLL_MS="${KAIKEY_SAFARI_STEP_POLL_MS:-75}"
 KAIKEY_APPROVE_ATTEMPTS="${KAIKEY_APPROVE_ATTEMPTS:-5}"
 KAIKEY_APPROVE_INTERVAL_MS="${KAIKEY_APPROVE_INTERVAL_MS:-1500}"
+KAIKEY_POST_APPROVAL_WAIT_SECONDS="${KAIKEY_POST_APPROVAL_WAIT_SECONDS:-2}"
 KAIKEY_AUTO_APPROVE_ENABLED="${KAIKEY_AUTO_APPROVE_ENABLED:-1}"
 KAIKEY_STATE_PATH="${KAIKEY_STATE_PATH:-$HOME/Library/Application Support/KLMSNotesSync/kaikey_state.json}"
 export KAIKEY_STATE_PATH
@@ -134,7 +135,7 @@ while (( $(date +%s) < deadline_epoch )); do
             "--interval-ms=$KAIKEY_APPROVE_INTERVAL_MS" 2>/dev/null || true)"
           approved="$(json_get "$approve_json" approved 2>/dev/null || true)"
           if [[ "$approved" == "True" || "$approved" == "true" ]]; then
-            sleep 4
+            sleep "$KAIKEY_POST_APPROVAL_WAIT_SECONDS"
           else
             reason="$(json_get "$approve_json" reason 2>/dev/null || true)"
             print -r -- "status=failed stage=approve reason=${reason:-unknown}"

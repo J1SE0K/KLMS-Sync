@@ -61,14 +61,13 @@ function advanceOneStep(tab, targetUrl, displayName) {
   }
 
   const urlLower = url.toLowerCase();
-  const title = safeString(() => tab.name());
 
   if (
     urlLower.includes("klms.kaist.ac.kr") &&
     !urlLower.includes("/login/") &&
     !urlLower.includes("ssologin.php")
   ) {
-    return { status: "authenticated", url, title };
+    return { status: "authenticated", url, title: readTitle(tab) };
   }
 
   if (urlLower.includes("klms.kaist.ac.kr/login/ssologin.php")) {
@@ -88,8 +87,7 @@ function advanceOneStep(tab, targetUrl, displayName) {
     return {
       status: payload.ok ? "klms_redirect_clicked" : "waiting",
       reason: payload.reason || "",
-      url,
-      title
+      url
     };
   }
 
@@ -126,8 +124,7 @@ function advanceOneStep(tab, targetUrl, displayName) {
       status: payload.ok ? "login_submitted" : "waiting",
       reason: payload.reason || "",
       method: payload.method || "",
-      url,
-      title
+      url
     };
   }
 
@@ -158,12 +155,15 @@ function advanceOneStep(tab, targetUrl, displayName) {
       status: payload.ok ? "twofactor_digits" : "waiting",
       digits: payload.digits || "",
       reason: payload.reason || "",
-      url,
-      title
+      url
     };
   }
 
-  return { status: "waiting", url, title };
+  return { status: "waiting", url };
+}
+
+function readTitle(tab) {
+  return safeString(() => tab.name());
 }
 
 function parseOptions(argv) {
